@@ -1,0 +1,191 @@
+/* ── Reset & base ────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #F7F6F3;
+  color: #1A1A1A;
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.app-wrap { max-width: 520px; margin: 0 auto; min-height: 100vh; background: #fff; }
+main { padding-bottom: 60px; }
+
+/* ── Login ───────────────────────────────────────────────────── */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #F7F6F3; padding: 24px; }
+.login-box { background: #fff; border-radius: 16px; border: 0.5px solid #E0DFDB; padding: 28px 24px; width: 100%; max-width: 360px; }
+.login-logo { font-size: 36px; text-align: center; margin-bottom: 10px; }
+.login-title { font-size: 20px; font-weight: 600; text-align: center; color: #1A1A1A; margin-bottom: 4px; }
+.login-sub { font-size: 13px; color: #888; text-align: center; margin-bottom: 20px; }
+
+/* ── Header ──────────────────────────────────────────────────── */
+.app-header {
+  position: sticky; top: 0; z-index: 20;
+  background: #fff; border-bottom: 0.5px solid #E0DFDB;
+  padding: 12px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.app-title { font-size: 16px; font-weight: 600; color: #1A1A1A; }
+.app-week { font-size: 12px; color: #888; }
+
+/* ── Nav ─────────────────────────────────────────────────────── */
+.nav-bar {
+  display: flex; gap: 4px;
+  background: #F1F0EC; border-bottom: 0.5px solid #E0DFDB;
+  padding: 6px 12px;
+}
+.nav-btn {
+  flex: 1; padding: 7px 4px; font-size: 13px;
+  border: none; background: transparent; color: #888;
+  border-radius: 8px; cursor: pointer; font-weight: 400;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-btn.active {
+  background: #fff; color: #1A1A1A; font-weight: 500;
+  border: 0.5px solid #D0CFC9; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+
+/* ── Tab content ─────────────────────────────────────────────── */
+.tab-content { padding: 12px; }
+
+/* ── Stats ───────────────────────────────────────────────────── */
+.stat-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.stat-card {
+  flex: 1; background: #F7F6F3; border: 0.5px solid #E0DFDB;
+  border-radius: 10px; padding: 10px 12px; text-align: center;
+}
+.stat-card.success { background: #EAF3DE; border-color: #97C459; }
+.stat-card.warn { background: #FAEEDA; border-color: #EF9F27; }
+.stat-val { font-size: 24px; font-weight: 600; color: #1A1A1A; }
+.stat-card.success .stat-val { color: #27500A; }
+.stat-card.warn .stat-val { color: #633806; }
+.stat-lbl { font-size: 11px; color: #888; margin-top: 2px; }
+.stat-card.success .stat-lbl { color: #3B6D11; }
+.stat-card.warn .stat-lbl { color: #633806; }
+
+/* ── List card ───────────────────────────────────────────────── */
+.list-card {
+  background: #fff; border: 0.5px solid #E0DFDB;
+  border-radius: 12px; padding: 14px; margin-bottom: 10px;
+}
+.list-card-header { margin-bottom: 10px; }
+.list-name { font-weight: 600; font-size: 14px; color: #1A1A1A; }
+.list-meta { font-size: 11px; color: #888; margin-top: 2px; }
+
+.group-card-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; border-radius: 12px 12px 0 0;
+}
+
+/* ── Visitor row ─────────────────────────────────────────────── */
+.visitor-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-bottom: 0.5px solid #F0EFEB;
+  cursor: pointer; gap: 8px;
+}
+.visitor-row:last-child { border-bottom: none; }
+.visitor-row:hover { background: #FAFAF8; margin: 0 -4px; padding: 10px 4px; border-radius: 6px; }
+.visitor-name { font-size: 13px; font-weight: 500; color: #1A1A1A; }
+.visitor-sub { font-size: 11px; color: #888; margin-top: 1px; }
+
+/* ── Chips ───────────────────────────────────────────────────── */
+.group-chip { font-size: 12px; padding: 3px 10px; border-radius: 20px; font-weight: 500; white-space: nowrap; }
+.admin-chip { font-size: 11px; padding: 3px 8px; border-radius: 20px; background: #1A1A1A; color: #fff; font-weight: 500; }
+.status-chip { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; white-space: nowrap; }
+.note-chip { font-size: 11px; padding: 2px 7px; border-radius: 20px; background: #EEEDFE; color: #26215C; border: 0.5px solid #AFA9EC; white-space: nowrap; }
+.name-chip { font-size: 12px; background: #E9F2FE; color: #0C447C; border: 0.5px solid #85B7EB; border-radius: 20px; padding: 3px 10px; display: flex; align-items: center; gap: 6px; }
+.chip-del { background: none; border: none; cursor: pointer; color: inherit; font-size: 15px; padding: 0; line-height: 1; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+
+/* ── Fields ──────────────────────────────────────────────────── */
+.field-label { font-size: 11px; color: #888; margin-bottom: 4px; display: block; }
+.field-input {
+  width: 100%; font-size: 14px; padding: 9px 11px;
+  border: 0.5px solid #D0CFC9; border-radius: 8px;
+  background: #FAFAF8; color: #1A1A1A;
+  outline: none; transition: border-color 0.15s;
+}
+.field-input:focus { border-color: #185FA5; }
+select.field-input { cursor: pointer; }
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.btn-primary {
+  padding: 9px 18px; font-size: 13px; font-weight: 500;
+  background: #185FA5; color: #fff; border: none;
+  border-radius: 8px; cursor: pointer; transition: background 0.15s;
+}
+.btn-primary:hover { background: #124D8A; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary.full { width: 100%; }
+.btn-outline { padding: 9px 14px; font-size: 13px; background: transparent; color: #1A1A1A; border: 0.5px solid #D0CFC9; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+.btn-ghost { background: none; border: none; font-size: 12px; color: #888; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.btn-ghost:hover { background: #F0EFEB; }
+.btn-close { background: none; border: none; font-size: 26px; color: #888; cursor: pointer; line-height: 1; padding: 0; }
+.btn-del { background: none; border: none; font-size: 18px; color: #C0392B; cursor: pointer; padding: 0 4px; }
+
+/* ── Modal ───────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  z-index: 50; display: flex; align-items: flex-end; justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+.modal-sheet {
+  background: #fff; width: 100%; max-width: 520px;
+  border-radius: 18px 18px 0 0; max-height: 88vh; overflow-y: auto;
+  animation: slideUp 0.2s ease;
+}
+.modal-header {
+  position: sticky; top: 0; background: #fff;
+  border-bottom: 0.5px solid #E0DFDB;
+  padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.modal-visitor-name { font-size: 17px; font-weight: 600; }
+.modal-list-name { font-size: 12px; color: #888; margin-top: 2px; }
+.modal-body { padding: 16px; padding-bottom: 32px; }
+
+/* ── Status grid ─────────────────────────────────────────────── */
+.section-label { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 8px; }
+.status-opt {
+  padding: 9px 8px; font-size: 12px; font-weight: 400;
+  background: #F7F6F3; color: #5F5E5A;
+  border: 0.5px solid #D0CFC9; border-radius: 8px; cursor: pointer;
+  transition: all 0.15s;
+}
+.status-opt.active { font-weight: 500; }
+.called-by-note { font-size: 11px; color: #888; margin-bottom: 8px; }
+
+/* ── Comments ────────────────────────────────────────────────── */
+.comment-card { background: #F7F6F3; border: 0.5px solid #E0DFDB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.comment-meta { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.comment-author { font-size: 12px; font-weight: 600; color: #444; }
+.comment-time { font-size: 11px; color: #aaa; }
+.comment-text { font-size: 13px; color: #1A1A1A; line-height: 1.4; }
+.comment-compose { display: flex; gap: 8px; margin-top: 12px; }
+
+/* ── Manage ──────────────────────────────────────────────────── */
+.manage-card { background: #fff; border: 0.5px solid #E0DFDB; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.manage-card-title { font-size: 14px; font-weight: 600; color: #1A1A1A; margin-bottom: 12px; }
+.active-list-item { border: 0.5px solid #E0DFDB; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+.manage-visitor-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 0.5px solid #F0EFEB; font-size: 13px; }
+.manage-visitor-row:last-child { border-bottom: none; }
+.member-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 0.5px solid #F0EFEB; }
+.member-row:last-child { border-bottom: none; }
+
+/* ── States ──────────────────────────────────────────────────── */
+.empty-state { text-align: center; padding: 40px 20px; color: #888; font-size: 13px; line-height: 1.6; }
+.empty-note { font-size: 12px; color: #aaa; font-style: italic; padding: 6px 0; }
+.err-text { font-size: 12px; color: #C0392B; margin-top: 6px; }
+.success-text { font-size: 12px; color: #27500A; margin-top: 6px; }
+
+/* ── Animations ──────────────────────────────────────────────── */
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes slideUp { from { transform: translateY(30px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+
+/* ── Mobile ──────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .app-wrap { max-width: 100%; }
+  .login-box { border-radius: 12px; padding: 22px 18px; }
+}
