@@ -63,7 +63,7 @@ function LoginScreen({ onLogin }) {
       }
       const m = snap.data();
       if (m.pin !== pin) { setErr("Wrong PIN. Try again."); setLoading(false); return; }
-      onLogin({ name: m.name, group: m.group || null, isAdmin: !!m.isAdmin, key });
+      onLogin({ name: m.name, group: m.group || null, isAdmin: !!m.isAdmin, isPastor: !!m.isPastor, key });
     } catch (e) {
       setErr("Connection error. Check your internet and try again.");
       setLoading(false);
@@ -103,6 +103,7 @@ function Header({ user, currentWeek, onLogout }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {gm && <span className="group-chip" style={{ background: gm.bg, color: gm.color, border: `1px solid ${gm.border}` }}>Group {user.group}</span>}
         {user.isAdmin && <span className="admin-chip">Admin</span>}
+        {user.isPastor && <span className="admin-chip" style={{ background: "#7B3FA8" }}>Pastor</span>}
         <button className="btn-ghost" onClick={onLogout}>Sign out</button>
       </div>
     </header>
@@ -110,8 +111,8 @@ function Header({ user, currentWeek, onLogout }) {
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────
-function NavBar({ tab, setTab, isAdmin }) {
-  const tabs = [{ id: "my", label: "My list" }, { id: "all", label: "All groups" },
+function NavBar({ tab, setTab, isAdmin, isPastor }) {
+  const tabs = [...((isPastor && !isAdmin) ? [] : [{ id: "my", label: "My list" }]), { id: "all", label: "All groups" },
     ...(isAdmin ? [{ id: "manage", label: "Manage" }] : [])];
   return (
     <nav className="nav-bar">
@@ -260,7 +261,7 @@ function MyListTab({ lists, currentWeek, user, onSelectVisitor }) {
 }
 
 // ── ALL GROUPS TAB ────────────────────────────────────────────────────────
-function AllGroupsTab({ lists, currentWeek, onSelectVisitor }) {
+function AllGroupsTab({ lists, currentWeek, onSelectVisitor, user }) {
   return (
     <div className="tab-content">
       {GROUPS.map(g => {
@@ -337,7 +338,14 @@ function ManageTab({ lists, currentWeek, onWeekChange, user }) {
   async function addMember() {
     if (!memName.trim() || !memPin.trim()) { setMemMsg("Name and PIN required."); return; }
     const key = memName.trim().toLowerCase().replace(/\s+/g, "_");
-    await setDoc(doc(db, "members", key), { name: memName.trim(), group: memGroup, isAdmin: false, pin: memPin.trim() });
+    const isPastor = memGroup === "pastor";
+    await setDoc(doc(db, "members", key), {
+      name: memName.trim(),
+      group: isPastor ? null : memGroup,
+      isAdmin: false,
+      isPastor,
+      pin: memPin.trim()
+    });
     setMemName(""); setMemPin(""); setMemMsg("✓ Member added!"); setTimeout(() => setMemMsg(""), 3000);
   }
 
@@ -413,9 +421,10 @@ function ManageTab({ lists, currentWeek, onWeekChange, user }) {
         <div className="manage-card-title">Add team member</div>
         <label className="field-label">Name</label>
         <input className="field-input" placeholder="Member name" value={memName} onChange={e => setMemName(e.target.value)} style={{ marginBottom: 8 }} />
-        <label className="field-label">Group</label>
+        <label className="field-label">Role</label>
         <select className="field-input" value={memGroup} onChange={e => setMemGroup(e.target.value)} style={{ marginBottom: 8 }}>
-          {GROUPS.map(g => <option key={g} value={g}>Group {g}</option>)}
+          {GROUPS.map(g => <option key={g} value={g}>Group {g} — Follow-up team</option>)}
+          <option value="pastor">Pastor — View all, can call & leave notes</option>
         </select>
         <label className="field-label">PIN</label>
         <input className="field-input" placeholder="Set a PIN" value={memPin} onChange={e => setMemPin(e.target.value)} style={{ marginBottom: 10 }} />
@@ -426,7 +435,10 @@ function ManageTab({ lists, currentWeek, onWeekChange, user }) {
             <div key={m.id} className="member-row">
               <span style={{ fontSize: 13 }}>{m.name}</span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="group-chip" style={{ background: GROUP_META[m.group]?.bg, color: GROUP_META[m.group]?.color, border: `1px solid ${GROUP_META[m.group]?.border}` }}>{m.group}</span>
+                {m.isPastor
+                  ? <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#F0E6FA", color: "#7B3FA8", border: "1px solid #C9A0E8", fontWeight: 500 }}>Pastor</span>
+                  : <span className="group-chip" style={{ background: GROUP_META[m.group]?.bg, color: GROUP_META[m.group]?.color, border: `1px solid ${GROUP_META[m.group]?.border}` }}>{m.group}</span>
+                }
                 <button className="btn-del" onClick={() => deleteMember(m.id)}>×</button>
               </div>
             </div>
@@ -468,17 +480,20 @@ export default function App() {
 
   if (!user) return <LoginScreen onLogin={handleLogin} />;
 
+  // Pastors default to "all" tab since they don't have their own group list
+  const effectiveTab = (user.isPastor && !user.isAdmin && tab === "my") ? "all" : tab;
+
   const selectedList = selected ? lists.find(l => l.id === selected.listId) : null;
   const selectedVisitor = selectedList?.visitors.find(v => v.id === selected.visitor.id);
 
   return (
     <div className="app-wrap">
       <Header user={user} currentWeek={currentWeek} onLogout={handleLogout} />
-      <NavBar tab={tab} setTab={setTab} isAdmin={user.isAdmin} />
+      <NavBar tab={effectiveTab} setTab={setTab} isAdmin={user.isAdmin} isPastor={user.isPastor} />
       <main>
-        {tab === "my" && <MyListTab lists={lists} currentWeek={currentWeek} user={user} onSelectVisitor={setSelected} />}
-        {tab === "all" && <AllGroupsTab lists={lists} currentWeek={currentWeek} onSelectVisitor={setSelected} />}
-        {tab === "manage" && user.isAdmin && <ManageTab lists={lists} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} />}
+        {effectiveTab === "my" && <MyListTab lists={lists} currentWeek={currentWeek} user={user} onSelectVisitor={setSelected} />}
+        {effectiveTab === "all" && <AllGroupsTab lists={lists} currentWeek={currentWeek} onSelectVisitor={setSelected} user={user} />}
+        {effectiveTab === "manage" && user.isAdmin && <ManageTab lists={lists} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} />}
       </main>
       {selected && selectedVisitor && (
         <VisitorModal visitor={selectedVisitor} listId={selected.listId} listName={selected.listName}
