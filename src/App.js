@@ -20,8 +20,10 @@ const STATUS_META = {
   not_reached:  { label: "Not reached",  bg: "#FAEEDA", color: "#633806", border: "#EF9F27" },
   left_message: { label: "Left message", bg: "#EEEDFE", color: "#26215C", border: "#AFA9EC" },
 };
+const PASTOR_META = { bg: "#F0E6FA", color: "#7B3FA8", border: "#C9A0E8" };
 
 function uid() { return "v" + Date.now() + "_" + Math.random().toString(36).slice(2, 6); }
+function slug(n) { return n.trim().toLowerCase().replace(/\s+/g, "_"); }
 function groupForOffset(listWeek, displayWeek) {
   const off = displayWeek - listWeek;
   if (off < 0 || off > 3) return null;
@@ -34,9 +36,6 @@ function fmtDateTime(ts) {
     d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 }
 
-// ── ADMIN PASSWORD (stored in Firestore, changeable) ──────────────────────
-const ADMIN_KEY = "admin";
-
 // ── LOGIN ─────────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   const [name, setName] = useState("");
@@ -48,15 +47,12 @@ function LoginScreen({ onLogin }) {
     if (!name.trim() || !pin.trim()) { setErr("Enter your name and PIN."); return; }
     setLoading(true); setErr("");
     try {
-      const key = name.trim().toLowerCase().replace(/\s+/g, "_");
+      const key = slug(name);
       const snap = await getDoc(doc(db, "members", key));
       if (!snap.exists()) {
-        // Auto-create admin on first login
-        if (key === ADMIN_KEY && pin === "admin1234") {
-          await setDoc(doc(db, "members", ADMIN_KEY), {
-            name: "Admin", group: null, isAdmin: true, pin: "admin1234"
-          });
-          onLogin({ name: "Admin", group: null, isAdmin: true, key: ADMIN_KEY });
+        if (key === "admin" && pin === "admin1234") {
+          await setDoc(doc(db, "members", "admin"), { name: "Admin", group: null, isAdmin: true, isPastor: false, pin: "admin1234" });
+          onLogin({ name: "Admin", group: null, isAdmin: true, isPastor: false, key: "admin" });
           return;
         }
         setErr("Name not found. Ask your admin to add you."); setLoading(false); return;
@@ -64,10 +60,7 @@ function LoginScreen({ onLogin }) {
       const m = snap.data();
       if (m.pin !== pin) { setErr("Wrong PIN. Try again."); setLoading(false); return; }
       onLogin({ name: m.name, group: m.group || null, isAdmin: !!m.isAdmin, isPastor: !!m.isPastor, key });
-    } catch (e) {
-      setErr("Connection error. Check your internet and try again.");
-      setLoading(false);
-    }
+    } catch { setErr("Connection error. Check your internet."); setLoading(false); }
   }
 
   return (
@@ -101,9 +94,9 @@ function Header({ user, currentWeek, onLogout }) {
         <div className="app-week">Week {currentWeek}</div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {gm && <span className="group-chip" style={{ background: gm.bg, color: gm.color, border: `1px solid ${gm.border}` }}>Group {user.group}</span>}
-        {user.isAdmin && <span className="admin-chip">Admin</span>}
-        {user.isPastor && <span className="admin-chip" style={{ background: "#7B3FA8" }}>Pastor</span>}
+        {gm && <span className="role-chip" style={{ background: gm.bg, color: gm.color, border: `1px solid ${gm.border}` }}>Group {user.group}</span>}
+        {user.isPastor && <span className="role-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, border: `1px solid ${PASTOR_META.border}` }}>Pastor</span>}
+        {user.isAdmin && <span className="role-chip" style={{ background: "#1A1A1A", color: "#fff", border: "none" }}>Admin</span>}
         <button className="btn-ghost" onClick={onLogout}>Sign out</button>
       </div>
     </header>
@@ -111,9 +104,12 @@ function Header({ user, currentWeek, onLogout }) {
 }
 
 // ── NAV ───────────────────────────────────────────────────────────────────
-function NavBar({ tab, setTab, isAdmin, isPastor }) {
-  const tabs = [...((isPastor && !isAdmin) ? [] : [{ id: "my", label: "My list" }]), { id: "all", label: "All groups" },
-    ...(isAdmin ? [{ id: "manage", label: "Manage" }] : [])];
+function NavBar({ tab, setTab, user }) {
+  const tabs = [];
+  if (!user.isPastor) tabs.push({ id: "my", label: "My list" });
+  tabs.push({ id: "all", label: user.isPastor ? "All activities" : "All groups" });
+  if (user.isPastor || user.isAdmin) tabs.push({ id: "pastor", label: "Lapsed members" });
+  if (user.isAdmin) tabs.push({ id: "manage", label: "Manage" });
   return (
     <nav className="nav-bar">
       {tabs.map(t => (
@@ -126,13 +122,14 @@ function NavBar({ tab, setTab, isAdmin, isPastor }) {
 }
 
 // ── VISITOR ROW ───────────────────────────────────────────────────────────
-function VisitorRow({ visitor, listName, onClick }) {
+function VisitorRow({ visitor, listName, assignedTo, onClick }) {
   const sm = STATUS_META[visitor.status] || STATUS_META.pending;
   return (
     <div className="visitor-row" onClick={onClick}>
       <div>
         <div className="visitor-name">{visitor.name}</div>
-        {listName && <div className="visitor-sub">{listName}</div>}
+        {assignedTo && <div className="visitor-sub">👤 {assignedTo}</div>}
+        {listName && !assignedTo && <div className="visitor-sub">{listName}</div>}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
         {visitor.comments?.length > 0 && (
@@ -147,46 +144,43 @@ function VisitorRow({ visitor, listName, onClick }) {
 }
 
 // ── VISITOR MODAL ─────────────────────────────────────────────────────────
-function VisitorModal({ visitor, listId, listName, user, onClose }) {
+function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
-  const [localVisitor, setLocalVisitor] = useState(visitor);
+  const [lv, setLv] = useState(visitor);
 
   async function updateStatus(status) {
-    const listRef = doc(db, "lists", listId);
-    const snap = await getDoc(listRef);
+    const col = listType === "pastor" ? "pastor_lists" : "lists";
+    const ref = doc(db, col, listId);
+    const snap = await getDoc(ref);
     if (!snap.exists()) return;
-    const visitors = snap.data().visitors.map(v =>
-      v.id === localVisitor.id ? { ...v, status, calledBy: user.name } : v
-    );
-    await updateDoc(listRef, { visitors });
-    setLocalVisitor(lv => ({ ...lv, status, calledBy: user.name }));
+    const visitors = snap.data().visitors.map(v => v.id === lv.id ? { ...v, status, calledBy: user.name } : v);
+    await updateDoc(ref, { visitors });
+    setLv(p => ({ ...p, status, calledBy: user.name }));
   }
 
   async function postComment() {
     if (!comment.trim()) return;
     setSaving(true);
-    const listRef = doc(db, "lists", listId);
-    const snap = await getDoc(listRef);
+    const col = listType === "pastor" ? "pastor_lists" : "lists";
+    const ref = doc(db, col, listId);
+    const snap = await getDoc(ref);
     if (!snap.exists()) { setSaving(false); return; }
-    const newComment = { id: uid(), text: comment.trim(), author: user.name, ts: Date.now() };
-    const visitors = snap.data().visitors.map(v =>
-      v.id === localVisitor.id ? { ...v, comments: [...(v.comments || []), newComment] } : v
-    );
-    await updateDoc(listRef, { visitors });
-    setLocalVisitor(lv => ({ ...lv, comments: [...(lv.comments || []), newComment] }));
-    setComment("");
-    setSaving(false);
+    const nc = { id: uid(), text: comment.trim(), author: user.name, ts: Date.now() };
+    const visitors = snap.data().visitors.map(v => v.id === lv.id ? { ...v, comments: [...(v.comments || []), nc] } : v);
+    await updateDoc(ref, { visitors });
+    setLv(p => ({ ...p, comments: [...(p.comments || []), nc] }));
+    setComment(""); setSaving(false);
   }
 
-  const sm = STATUS_META[localVisitor.status] || STATUS_META.pending;
+  const sm = STATUS_META[lv.status] || STATUS_META.pending;
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal-sheet">
         <div className="modal-header">
           <div>
-            <div className="modal-visitor-name">{localVisitor.name}</div>
-            <div className="modal-list-name">{listName}</div>
+            <div className="modal-visitor-name">{lv.name}</div>
+            <div className="modal-list-name">{listName} {listType === "pastor" ? "· Lapsed member" : "· New visitor"}</div>
           </div>
           <button className="btn-close" onClick={onClose}>×</button>
         </div>
@@ -194,17 +188,16 @@ function VisitorModal({ visitor, listId, listName, user, onClose }) {
           <div className="section-label">Call status</div>
           <div className="status-grid">
             {Object.entries(STATUS_META).map(([key, meta]) => (
-              <button key={key}
-                className={`status-opt${localVisitor.status === key ? " active" : ""}`}
-                style={localVisitor.status === key ? { background: meta.bg, color: meta.color, border: `1.5px solid ${meta.border}` } : {}}
+              <button key={key} className={`status-opt${lv.status === key ? " active" : ""}`}
+                style={lv.status === key ? { background: meta.bg, color: meta.color, border: `1.5px solid ${meta.border}` } : {}}
                 onClick={() => updateStatus(key)}>{meta.label}</button>
             ))}
           </div>
-          {localVisitor.calledBy && <p className="called-by-note">Last updated by {localVisitor.calledBy}</p>}
+          {lv.calledBy && <p className="called-by-note">Last updated by {lv.calledBy}</p>}
           <div className="section-label" style={{ marginTop: 20 }}>Notes</div>
-          {(!localVisitor.comments || localVisitor.comments.length === 0)
+          {(!lv.comments || lv.comments.length === 0)
             ? <p className="empty-note">No notes yet.</p>
-            : localVisitor.comments.map(c => (
+            : lv.comments.map(c => (
               <div key={c.id} className="comment-card">
                 <div className="comment-meta">
                   <span className="comment-author">{c.author}</span>
@@ -216,8 +209,7 @@ function VisitorModal({ visitor, listId, listName, user, onClose }) {
           }
           <div className="comment-compose">
             <input className="field-input" placeholder="Add a note…" value={comment}
-              onChange={e => setComment(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && postComment()} />
+              onChange={e => setComment(e.target.value)} onKeyDown={e => e.key === "Enter" && postComment()} />
             <button className="btn-primary" onClick={postComment} disabled={saving}>{saving ? "…" : "Post"}</button>
           </div>
         </div>
@@ -226,61 +218,73 @@ function VisitorModal({ visitor, listId, listName, user, onClose }) {
   );
 }
 
-// ── MY LIST TAB ───────────────────────────────────────────────────────────
+// ── STATS ROW ─────────────────────────────────────────────────────────────
+function StatsRow({ visitors }) {
+  const called = visitors.filter(v => v.status === "called").length;
+  const remaining = visitors.length - called;
+  return (
+    <div className="stat-row">
+      <div className="stat-card"><div className="stat-val">{visitors.length}</div><div className="stat-lbl">Total</div></div>
+      <div className="stat-card success"><div className="stat-val">{called}</div><div className="stat-lbl">Called ✓</div></div>
+      <div className="stat-card warn"><div className="stat-val">{remaining}</div><div className="stat-lbl">Remaining</div></div>
+    </div>
+  );
+}
+
+// ── MY LIST TAB (follow-up team members) ─────────────────────────────────
 function MyListTab({ lists, currentWeek, user, onSelectVisitor }) {
   const myLists = lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === user.group);
-  const allVisitors = myLists.flatMap(l => l.visitors.map(v => ({ ...v, listId: l.id, listName: l.name })));
-  const called = allVisitors.filter(v => v.status === "called").length;
+  // Get only contacts assigned to this user (random assignment)
+  const myVisitors = myLists.flatMap(l =>
+    (l.visitors || []).filter(v => v.assignedTo === user.name).map(v => ({ ...v, listId: l.id, listName: l.name }))
+  );
   const gm = GROUP_META[user.group] || GROUP_META.A;
 
   if (!user.group) return <div className="empty-state">You're an admin — use the All Groups or Manage tab.</div>;
 
   return (
     <div className="tab-content">
-      <div className="stat-row">
-        <div className="stat-card"><div className="stat-val">{allVisitors.length}</div><div className="stat-lbl">To contact</div></div>
-        <div className="stat-card success"><div className="stat-val">{called}</div><div className="stat-lbl">Called ✓</div></div>
-        <div className="stat-card warn"><div className="stat-val">{allVisitors.length - called}</div><div className="stat-lbl">Remaining</div></div>
-      </div>
-      {myLists.length === 0
-        ? <div className="empty-state">No contacts assigned to Group {user.group} this week.</div>
-        : myLists.map(list => (
-          <div key={list.id} className="list-card" style={{ borderLeft: `3px solid ${gm.border}` }}>
-            <div className="list-card-header">
-              <div className="list-name">📋 {list.name}</div>
-              <div className="list-meta">Week {list.createdWeek} · {list.visitors.length} visitor{list.visitors.length !== 1 ? "s" : ""}</div>
+      <StatsRow visitors={myVisitors} />
+      {myVisitors.length === 0
+        ? <div className="empty-state">No contacts assigned to you this week.<br />Ask your admin to assign contacts.</div>
+        : myLists.filter(l => groupForOffset(l.createdWeek, currentWeek) === user.group).map(list => {
+          const mine = (list.visitors || []).filter(v => v.assignedTo === user.name);
+          if (!mine.length) return null;
+          return (
+            <div key={list.id} className="list-card" style={{ borderLeft: `3px solid ${gm.border}` }}>
+              <div className="list-card-header">
+                <div className="list-name">📋 {list.name}</div>
+                <div className="list-meta">Week {list.createdWeek} · {mine.length} assigned to you</div>
+              </div>
+              {mine.map(v => <VisitorRow key={v.id} visitor={v} onClick={() => onSelectVisitor({ visitor: v, listId: list.id, listName: list.name, listType: "followup" })} />)}
             </div>
-            {list.visitors.map(v => (
-              <VisitorRow key={v.id} visitor={v} onClick={() => onSelectVisitor({ visitor: v, listId: list.id, listName: list.name })} />
-            ))}
-          </div>
-        ))
+          );
+        })
       }
     </div>
   );
 }
 
 // ── ALL GROUPS TAB ────────────────────────────────────────────────────────
-function AllGroupsTab({ lists, currentWeek, onSelectVisitor, user }) {
+function AllGroupsTab({ lists, currentWeek, onSelectVisitor }) {
   return (
     <div className="tab-content">
       {GROUPS.map(g => {
         const gm = GROUP_META[g];
         const glists = lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === g);
-        const visitors = glists.flatMap(l => l.visitors.map(v => ({ ...v, listId: l.id, listName: l.name })));
+        const visitors = glists.flatMap(l => (l.visitors || []).map(v => ({ ...v, listId: l.id, listName: l.name })));
+        const called = visitors.filter(v => v.status === "called").length;
         return (
-          <div key={g} className="list-card" style={{ padding: 0, overflow: "hidden" }}>
+          <div key={g} className="list-card" style={{ padding: 0, overflow: "hidden", marginBottom: 10 }}>
             <div className="group-card-header" style={{ background: gm.bg, borderBottom: `1px solid ${gm.border}` }}>
-              <span style={{ fontWeight: 500, color: gm.color }}>Group {g}</span>
-              <span style={{ fontSize: 12, color: gm.color }}>{visitors.length} contact{visitors.length !== 1 ? "s" : ""}</span>
+              <span style={{ fontWeight: 600, color: gm.color }}>Group {g}</span>
+              <span style={{ fontSize: 12, color: gm.color }}>{called}/{visitors.length} called</span>
             </div>
             <div style={{ padding: "8px 14px 10px" }}>
               {visitors.length === 0
                 ? <p className="empty-note">No contacts assigned this week.</p>
-                : visitors.map(v => (
-                  <VisitorRow key={v.id} visitor={v} listName={v.listName}
-                    onClick={() => onSelectVisitor({ visitor: v, listId: v.listId, listName: v.listName })} />
-                ))
+                : visitors.map(v => <VisitorRow key={v.id} visitor={v} listName={v.listName} assignedTo={v.assignedTo}
+                    onClick={() => onSelectVisitor({ visitor: v, listId: v.listId, listName: v.listName, listType: "followup" })} />)
               }
             </div>
           </div>
@@ -290,61 +294,119 @@ function AllGroupsTab({ lists, currentWeek, onSelectVisitor, user }) {
   );
 }
 
+// ── PASTOR TAB (lapsed members) ───────────────────────────────────────────
+function PastorTab({ pastorLists, user, onSelectVisitor }) {
+  const active = pastorLists.filter(l => l.status === "active");
+  const myVisitors = active.flatMap(l =>
+    (l.visitors || []).filter(v => !v.assignedTo || v.assignedTo === user.name || user.isAdmin)
+      .map(v => ({ ...v, listId: l.id, listName: l.name }))
+  );
+
+  return (
+    <div className="tab-content">
+      <div style={{ background: PASTOR_META.bg, border: `1px solid ${PASTOR_META.border}`, borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+        <p style={{ fontSize: 13, color: PASTOR_META.color, fontWeight: 500 }}>🙏 Lapsed member follow-up</p>
+        <p style={{ fontSize: 12, color: PASTOR_META.color, marginTop: 2 }}>These are members who have not been attending for some time.</p>
+      </div>
+      <StatsRow visitors={myVisitors} />
+      {active.length === 0
+        ? <div className="empty-state">No lapsed member lists yet.<br />Admin can add lists in the Manage tab.</div>
+        : active.map(list => {
+          const vs = (list.visitors || []).filter(v => !v.assignedTo || v.assignedTo === user.name || user.isAdmin);
+          if (!vs.length) return null;
+          return (
+            <div key={list.id} className="list-card" style={{ borderLeft: `3px solid ${PASTOR_META.border}` }}>
+              <div className="list-card-header">
+                <div className="list-name">📋 {list.name}</div>
+                <div className="list-meta">{vs.length} member{vs.length !== 1 ? "s" : ""}</div>
+              </div>
+              {vs.map(v => <VisitorRow key={v.id} visitor={v} assignedTo={v.assignedTo}
+                onClick={() => onSelectVisitor({ visitor: v, listId: list.id, listName: list.name, listType: "pastor" })} />)}
+            </div>
+          );
+        })
+      }
+    </div>
+  );
+}
+
 // ── MANAGE TAB ────────────────────────────────────────────────────────────
-function ManageTab({ lists, currentWeek, onWeekChange, user }) {
-  const [newListName, setNewListName] = useState("");
-  const [newListWeek, setNewListWeek] = useState(currentWeek);
-  const [names, setNames] = useState([]);
-  const [nameInput, setNameInput] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [members, setMembers] = useState([]);
+function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, members }) {
+  const [activeSection, setActiveSection] = useState("week");
+
+  // New visitor list state
+  const [nvName, setNvName] = useState("");
+  const [nvWeek, setNvWeek] = useState(currentWeek);
+  const [nvNames, setNvNames] = useState([]);
+  const [nvInput, setNvInput] = useState("");
+  const [nvMsg, setNvMsg] = useState("");
+  const [nvSaving, setNvSaving] = useState(false);
+
+  // Lapsed member list state
+  const [lmName, setLmName] = useState("");
+  const [lmNames, setLmNames] = useState([]);
+  const [lmInput, setLmInput] = useState("");
+  const [lmMsg, setLmMsg] = useState("");
+  const [lmSaving, setLmSaving] = useState(false);
+
+  // Member state
   const [memName, setMemName] = useState("");
-  const [memGroup, setMemGroup] = useState("A");
+  const [memRole, setMemRole] = useState("A");
   const [memPin, setMemPin] = useState("");
   const [memMsg, setMemMsg] = useState("");
   const [newPin, setNewPin] = useState("");
   const [pinMsg, setPinMsg] = useState("");
 
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, "members"), snap => {
-      setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    return unsub;
-  }, []);
+  // Assign state
+  const [assignMsg, setAssignMsg] = useState("");
 
-  async function createList() {
-    if (!newListName.trim() || names.length === 0) { setMsg("Add a list name and at least one visitor."); return; }
-    setSaving(true);
+  function addNvName() { if (nvInput.trim()) { setNvNames(p => [...p, nvInput.trim()]); setNvInput(""); } }
+  function addLmName() { if (lmInput.trim()) { setLmNames(p => [...p, lmInput.trim()]); setLmInput(""); } }
+
+  async function createNewVisitorList() {
+    if (!nvName.trim() || nvNames.length === 0) { setNvMsg("Add a list name and at least one visitor."); return; }
+    setNvSaving(true);
     const id = uid();
-    await setDoc(doc(db, "lists", id), {
-      id, name: newListName.trim(), createdWeek: parseInt(newListWeek) || currentWeek,
-      visitors: names.map(n => ({ id: uid(), name: n, status: "pending", comments: [] })),
-      status: "active", createdAt: serverTimestamp(),
+    const groupMembers = members.filter(m => !m.isAdmin && !m.isPastor && m.group);
+    // Randomly assign each visitor to a group member
+    const visitors = nvNames.map((n, i) => {
+      const shuffled = [...groupMembers].sort(() => Math.random() - 0.5);
+      const assigned = shuffled.length > 0 ? shuffled[i % shuffled.length].name : null;
+      return { id: uid(), name: n, status: "pending", comments: [], assignedTo: assigned };
     });
-    setNewListName(""); setNames([]); setNameInput("");
-    setMsg("✓ List created!"); setSaving(false);
-    setTimeout(() => setMsg(""), 3000);
+    await setDoc(doc(db, "lists", id), {
+      id, name: nvName.trim(), createdWeek: parseInt(nvWeek) || currentWeek,
+      visitors, status: "active", createdAt: serverTimestamp(),
+    });
+    setNvName(""); setNvNames([]); setNvInput("");
+    setNvMsg("✓ List created and contacts assigned!"); setNvSaving(false);
+    setTimeout(() => setNvMsg(""), 4000);
   }
 
-  async function archiveList(id) { await updateDoc(doc(db, "lists", id), { status: "archived" }); }
-
-  async function removeVisitor(listId, visitorId) {
-    const snap = await getDoc(doc(db, "lists", listId));
-    if (!snap.exists()) return;
-    await updateDoc(doc(db, "lists", listId), { visitors: snap.data().visitors.filter(v => v.id !== visitorId) });
+  async function createLapsedList() {
+    if (!lmName.trim() || lmNames.length === 0) { setLmMsg("Add a list name and at least one member."); return; }
+    setLmSaving(true);
+    const id = uid();
+    const pastors = members.filter(m => m.isPastor);
+    const visitors = lmNames.map((n, i) => {
+      const assigned = pastors.length > 0 ? pastors[i % pastors.length].name : null;
+      return { id: uid(), name: n, status: "pending", comments: [], assignedTo: assigned };
+    });
+    await setDoc(doc(db, "pastor_lists", id), {
+      id, name: lmName.trim(), visitors, status: "active", createdAt: serverTimestamp(),
+    });
+    setLmName(""); setLmNames([]); setLmInput("");
+    setLmMsg("✓ Lapsed member list created and assigned to pastors!"); setLmSaving(false);
+    setTimeout(() => setLmMsg(""), 4000);
   }
 
   async function addMember() {
     if (!memName.trim() || !memPin.trim()) { setMemMsg("Name and PIN required."); return; }
-    const key = memName.trim().toLowerCase().replace(/\s+/g, "_");
-    const isPastor = memGroup === "pastor";
+    const key = slug(memName);
+    const isPastor = memRole === "pastor";
     await setDoc(doc(db, "members", key), {
-      name: memName.trim(),
-      group: isPastor ? null : memGroup,
-      isAdmin: false,
-      isPastor,
-      pin: memPin.trim()
+      name: memName.trim(), group: isPastor ? null : memRole,
+      isAdmin: false, isPastor, pin: memPin.trim()
     });
     setMemName(""); setMemPin(""); setMemMsg("✓ Member added!"); setTimeout(() => setMemMsg(""), 3000);
   }
@@ -357,101 +419,206 @@ function ManageTab({ lists, currentWeek, onWeekChange, user }) {
     setNewPin(""); setPinMsg("✓ PIN updated!"); setTimeout(() => setPinMsg(""), 3000);
   }
 
+  async function reassignList(listId) {
+    const snap = await getDoc(doc(db, "lists", listId));
+    if (!snap.exists()) return;
+    const groupMembers = members.filter(m => !m.isAdmin && !m.isPastor && m.group);
+    if (!groupMembers.length) { setAssignMsg("No team members to assign to."); return; }
+    const visitors = snap.data().visitors.map((v, i) => ({
+      ...v, assignedTo: groupMembers[Math.floor(Math.random() * groupMembers.length)].name
+    }));
+    await updateDoc(doc(db, "lists", listId), { visitors });
+    setAssignMsg("✓ Contacts reassigned!"); setTimeout(() => setAssignMsg(""), 3000);
+  }
+
+  const sections = [
+    { id: "week", label: "📅 Week" },
+    { id: "newvisitors", label: "👥 New visitor lists" },
+    { id: "lapsed", label: "🙏 Lapsed member lists" },
+    { id: "members", label: "👤 Team members" },
+    { id: "pin", label: "🔑 Change PIN" },
+  ];
+
   return (
     <div className="tab-content">
-      <div className="manage-card">
-        <div className="manage-card-title">Current week</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <input type="number" className="field-input" style={{ width: 80, textAlign: "center" }}
-            defaultValue={currentWeek} onChange={e => onWeekChange(parseInt(e.target.value) || 1)} />
-          <span style={{ fontSize: 13, color: "#888" }}>Updates for all team members</span>
-        </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        {sections.map(s => (
+          <button key={s.id} onClick={() => setActiveSection(s.id)}
+            style={{ fontSize: 12, padding: "5px 10px", borderRadius: 20, border: "0.5px solid", cursor: "pointer",
+              background: activeSection === s.id ? "#185FA5" : "#F7F6F3",
+              color: activeSection === s.id ? "#fff" : "#444",
+              borderColor: activeSection === s.id ? "#185FA5" : "#D0CFC9" }}>
+            {s.label}
+          </button>
+        ))}
       </div>
-      <div className="manage-card">
-        <div className="manage-card-title">Add Sunday visitor list</div>
-        <label className="field-label">List name</label>
-        <input className="field-input" placeholder='e.g. "July 13 Sunday"' value={newListName}
-          onChange={e => setNewListName(e.target.value)} style={{ marginBottom: 10 }} />
-        <label className="field-label">Week number</label>
-        <input type="number" className="field-input" style={{ width: 80, marginBottom: 10 }}
-          value={newListWeek} onChange={e => setNewListWeek(e.target.value)} />
-        <label className="field-label">Visitor names</label>
-        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-          <input className="field-input" placeholder="Visitor full name" value={nameInput}
-            onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && (() => { if (nameInput.trim()) { setNames(p => [...p, nameInput.trim()]); setNameInput(""); } })()} />
-          <button className="btn-outline" onClick={() => { if (nameInput.trim()) { setNames(p => [...p, nameInput.trim()]); setNameInput(""); } }}>Add</button>
-        </div>
-        {names.length > 0 && (
-          <div className="chip-row">
-            {names.map((n, i) => (
-              <span key={i} className="name-chip">{n}
-                <button className="chip-del" onClick={() => setNames(p => p.filter((_, j) => j !== i))}>×</button>
-              </span>
-            ))}
-          </div>
-        )}
-        {msg && <p className={msg.startsWith("✓") ? "success-text" : "err-text"}>{msg}</p>}
-        <button className="btn-primary full" style={{ marginTop: 12 }} onClick={createList} disabled={saving}>
-          {saving ? "Saving…" : "Create list"}
-        </button>
-      </div>
-      {lists.filter(l => l.status === "active").length > 0 && (
+
+      {activeSection === "week" && (
         <div className="manage-card">
-          <div className="manage-card-title">Active lists</div>
-          {lists.filter(l => l.status === "active").sort((a, b) => b.createdWeek - a.createdWeek).map(list => (
-            <div key={list.id} className="active-list-item">
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                <div>
-                  <div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
-                  <div style={{ fontSize: 11, color: "#888" }}>Week {list.createdWeek} · {list.visitors.length} visitors</div>
-                </div>
-                <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => archiveList(list.id)}>Archive</button>
-              </div>
-              {list.visitors.map(v => (
-                <div key={v.id} className="manage-visitor-row">
-                  <span>{v.name}</span>
-                  <button className="btn-del" onClick={() => removeVisitor(list.id, v.id)}>×</button>
-                </div>
-              ))}
-            </div>
-          ))}
+          <div className="manage-card-title">Current week</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input type="number" className="field-input" style={{ width: 80, textAlign: "center" }}
+              defaultValue={currentWeek} onChange={e => onWeekChange(parseInt(e.target.value) || 1)} />
+            <span style={{ fontSize: 13, color: "#888" }}>Updates for all team members</span>
+          </div>
         </div>
       )}
-      <div className="manage-card">
-        <div className="manage-card-title">Add team member</div>
-        <label className="field-label">Name</label>
-        <input className="field-input" placeholder="Member name" value={memName} onChange={e => setMemName(e.target.value)} style={{ marginBottom: 8 }} />
-        <label className="field-label">Role</label>
-        <select className="field-input" value={memGroup} onChange={e => setMemGroup(e.target.value)} style={{ marginBottom: 8 }}>
-          {GROUPS.map(g => <option key={g} value={g}>Group {g} — Follow-up team</option>)}
-          <option value="pastor">Pastor — View all, can call & leave notes</option>
-        </select>
-        <label className="field-label">PIN</label>
-        <input className="field-input" placeholder="Set a PIN" value={memPin} onChange={e => setMemPin(e.target.value)} style={{ marginBottom: 10 }} />
-        {memMsg && <p className={memMsg.startsWith("✓") ? "success-text" : "err-text"}>{memMsg}</p>}
-        <button className="btn-primary full" onClick={addMember}>Add member</button>
-        <div style={{ marginTop: 14 }}>
-          {members.filter(m => m.id !== "admin").map(m => (
-            <div key={m.id} className="member-row">
-              <span style={{ fontSize: 13 }}>{m.name}</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {m.isPastor
-                  ? <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, background: "#F0E6FA", color: "#7B3FA8", border: "1px solid #C9A0E8", fontWeight: 500 }}>Pastor</span>
-                  : <span className="group-chip" style={{ background: GROUP_META[m.group]?.bg, color: GROUP_META[m.group]?.color, border: `1px solid ${GROUP_META[m.group]?.border}` }}>{m.group}</span>
-                }
-                <button className="btn-del" onClick={() => deleteMember(m.id)}>×</button>
-              </div>
+
+      {activeSection === "newvisitors" && (
+        <>
+          <div className="manage-card">
+            <div className="manage-card-title">Add new Sunday visitor list</div>
+            <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Contacts will be randomly assigned to Group A-D members.</p>
+            <label className="field-label">List name</label>
+            <input className="field-input" placeholder='e.g. "July 20 Sunday"' value={nvName}
+              onChange={e => setNvName(e.target.value)} style={{ marginBottom: 10 }} />
+            <label className="field-label">Week number</label>
+            <input type="number" className="field-input" style={{ width: 80, marginBottom: 10 }}
+              value={nvWeek} onChange={e => setNvWeek(e.target.value)} />
+            <label className="field-label">Visitor names</label>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input className="field-input" placeholder="Visitor full name" value={nvInput}
+                onChange={e => setNvInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addNvName()} />
+              <button className="btn-outline" onClick={addNvName}>Add</button>
             </div>
-          ))}
+            {nvNames.length > 0 && (
+              <div className="chip-row">
+                {nvNames.map((n, i) => (
+                  <span key={i} className="name-chip">{n}
+                    <button className="chip-del" onClick={() => setNvNames(p => p.filter((_, j) => j !== i))}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {nvMsg && <p className={nvMsg.startsWith("✓") ? "success-text" : "err-text"}>{nvMsg}</p>}
+            <button className="btn-primary full" style={{ marginTop: 12 }} onClick={createNewVisitorList} disabled={nvSaving}>
+              {nvSaving ? "Saving…" : "Create & assign list"}
+            </button>
+          </div>
+          <div className="manage-card">
+            <div className="manage-card-title">Active visitor lists</div>
+            {assignMsg && <p className="success-text" style={{ marginBottom: 8 }}>{assignMsg}</p>}
+            {lists.filter(l => l.status === "active").length === 0
+              ? <p className="empty-note">No active lists.</p>
+              : lists.filter(l => l.status === "active").sort((a, b) => b.createdWeek - a.createdWeek).map(list => (
+                <div key={list.id} className="active-list-item">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
+                      <div style={{ fontSize: 11, color: "#888" }}>Week {list.createdWeek} · {list.visitors?.length || 0} visitors</div>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => reassignList(list.id)}>↺ Reassign</button>
+                      <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => updateDoc(doc(db, "lists", list.id), { status: "archived" })}>Archive</button>
+                    </div>
+                  </div>
+                  {(list.visitors || []).map(v => (
+                    <div key={v.id} className="manage-visitor-row">
+                      <span>{v.name}</span>
+                      <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
+                    </div>
+                  ))}
+                </div>
+              ))
+            }
+          </div>
+        </>
+      )}
+
+      {activeSection === "lapsed" && (
+        <>
+          <div className="manage-card">
+            <div className="manage-card-title" style={{ color: PASTOR_META.color }}>Add lapsed member list</div>
+            <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Contacts will be assigned to pastors for follow-up.</p>
+            <label className="field-label">List name</label>
+            <input className="field-input" placeholder='e.g. "July 2026 Lapsed"' value={lmName}
+              onChange={e => setLmName(e.target.value)} style={{ marginBottom: 10 }} />
+            <label className="field-label">Member names</label>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input className="field-input" placeholder="Member full name" value={lmInput}
+                onChange={e => setLmInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addLmName()} />
+              <button className="btn-outline" onClick={addLmName}>Add</button>
+            </div>
+            {lmNames.length > 0 && (
+              <div className="chip-row">
+                {lmNames.map((n, i) => (
+                  <span key={i} className="name-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, border: `0.5px solid ${PASTOR_META.border}` }}>{n}
+                    <button className="chip-del" onClick={() => setLmNames(p => p.filter((_, j) => j !== i))}>×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {lmMsg && <p className={lmMsg.startsWith("✓") ? "success-text" : "err-text"}>{lmMsg}</p>}
+            <button className="btn-primary full" style={{ marginTop: 12, background: PASTOR_META.color }} onClick={createLapsedList} disabled={lmSaving}>
+              {lmSaving ? "Saving…" : "Create & assign to pastors"}
+            </button>
+          </div>
+          <div className="manage-card">
+            <div className="manage-card-title">Active lapsed member lists</div>
+            {pastorLists.filter(l => l.status === "active").length === 0
+              ? <p className="empty-note">No active lapsed member lists.</p>
+              : pastorLists.filter(l => l.status === "active").map(list => (
+                <div key={list.id} className="active-list-item">
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
+                      <div style={{ fontSize: 11, color: "#888" }}>{list.visitors?.length || 0} members</div>
+                    </div>
+                    <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => updateDoc(doc(db, "pastor_lists", list.id), { status: "archived" })}>Archive</button>
+                  </div>
+                  {(list.visitors || []).map(v => (
+                    <div key={v.id} className="manage-visitor-row">
+                      <span>{v.name}</span>
+                      <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
+                    </div>
+                  ))}
+                </div>
+              ))
+            }
+          </div>
+        </>
+      )}
+
+      {activeSection === "members" && (
+        <div className="manage-card">
+          <div className="manage-card-title">Team members</div>
+          <label className="field-label">Name</label>
+          <input className="field-input" placeholder="Member name" value={memName} onChange={e => setMemName(e.target.value)} style={{ marginBottom: 8 }} />
+          <label className="field-label">Role</label>
+          <select className="field-input" value={memRole} onChange={e => setMemRole(e.target.value)} style={{ marginBottom: 8 }}>
+            {GROUPS.map(g => <option key={g} value={g}>Group {g} — Follow-up team</option>)}
+            <option value="pastor">Pastor — Lapsed member follow-up</option>
+          </select>
+          <label className="field-label">PIN</label>
+          <input className="field-input" placeholder="Set a PIN" value={memPin} onChange={e => setMemPin(e.target.value)} style={{ marginBottom: 10 }} />
+          {memMsg && <p className={memMsg.startsWith("✓") ? "success-text" : "err-text"}>{memMsg}</p>}
+          <button className="btn-primary full" onClick={addMember}>Add member</button>
+          <div style={{ marginTop: 14 }}>
+            {members.filter(m => m.id !== "admin").map(m => (
+              <div key={m.id} className="member-row">
+                <span style={{ fontSize: 13 }}>{m.name}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {m.isPastor
+                    ? <span className="role-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, border: `1px solid ${PASTOR_META.border}` }}>Pastor</span>
+                    : <span className="role-chip" style={{ background: GROUP_META[m.group]?.bg, color: GROUP_META[m.group]?.color, border: `1px solid ${GROUP_META[m.group]?.border}` }}>{m.group}</span>
+                  }
+                  <button className="btn-del" onClick={() => deleteMember(m.id)}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
-      <div className="manage-card">
-        <div className="manage-card-title">Change your PIN</div>
-        <input className="field-input" type="password" placeholder="New PIN (4+ characters)" value={newPin}
-          onChange={e => setNewPin(e.target.value)} style={{ marginBottom: 10 }} />
-        {pinMsg && <p className={pinMsg.startsWith("✓") ? "success-text" : "err-text"}>{pinMsg}</p>}
-        <button className="btn-outline full" onClick={changePin}>Update PIN</button>
-      </div>
+      )}
+
+      {activeSection === "pin" && (
+        <div className="manage-card">
+          <div className="manage-card-title">Change your PIN</div>
+          <input className="field-input" type="password" placeholder="New PIN (4+ characters)" value={newPin}
+            onChange={e => setNewPin(e.target.value)} style={{ marginBottom: 10 }} />
+          {pinMsg && <p className={pinMsg.startsWith("✓") ? "success-text" : "err-text"}>{pinMsg}</p>}
+          <button className="btn-outline full" onClick={changePin}>Update PIN</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -459,20 +626,26 @@ function ManageTab({ lists, currentWeek, onWeekChange, user }) {
 // ── ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(() => { try { return JSON.parse(sessionStorage.getItem("fu_user")); } catch { return null; } });
-  const [tab, setTab] = useState("my");
+  const [tab, setTab] = useState(() => {
+    const u = (() => { try { return JSON.parse(sessionStorage.getItem("fu_user")); } catch { return null; } })();
+    return (u?.isPastor && !u?.isAdmin) ? "pastor" : "my";
+  });
   const [lists, setLists] = useState([]);
+  const [pastorLists, setPastorLists] = useState([]);
   const [currentWeek, setCurrentWeek] = useState(1);
+  const [members, setMembers] = useState([]);
   const [selected, setSelected] = useState(null);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "lists"), snap => setLists(snap.docs.map(d => d.data())));
-    const unsub2 = onSnapshot(doc(db, "config", "global"), snap => { if (snap.exists()) setCurrentWeek(snap.data().week || 1); });
-    return () => { unsub(); unsub2(); };
+    const u1 = onSnapshot(collection(db, "lists"), snap => setLists(snap.docs.map(d => d.data())));
+    const u2 = onSnapshot(collection(db, "pastor_lists"), snap => setPastorLists(snap.docs.map(d => d.data())));
+    const u3 = onSnapshot(doc(db, "config", "global"), snap => { if (snap.exists()) setCurrentWeek(snap.data().week || 1); });
+    const u4 = onSnapshot(collection(db, "members"), snap => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    return () => { u1(); u2(); u3(); u4(); };
   }, []);
 
   function handleLogin(u) { sessionStorage.setItem("fu_user", JSON.stringify(u)); setUser(u); }
   function handleLogout() { sessionStorage.removeItem("fu_user"); setUser(null); }
-
   async function handleWeekChange(w) {
     setCurrentWeek(w);
     await setDoc(doc(db, "config", "global"), { week: w }, { merge: true });
@@ -480,24 +653,24 @@ export default function App() {
 
   if (!user) return <LoginScreen onLogin={handleLogin} />;
 
-  // Pastors default to "all" tab since they don't have their own group list
-  const effectiveTab = (user.isPastor && !user.isAdmin && tab === "my") ? "all" : tab;
-
-  const selectedList = selected ? lists.find(l => l.id === selected.listId) : null;
-  const selectedVisitor = selectedList?.visitors.find(v => v.id === selected.visitor.id);
+  const selectedList = selected
+    ? (selected.listType === "pastor" ? pastorLists : lists).find(l => l.id === selected.listId)
+    : null;
+  const selectedVisitor = selectedList?.visitors?.find(v => v.id === selected.visitor.id);
 
   return (
     <div className="app-wrap">
       <Header user={user} currentWeek={currentWeek} onLogout={handleLogout} />
-      <NavBar tab={effectiveTab} setTab={setTab} isAdmin={user.isAdmin} isPastor={user.isPastor} />
+      <NavBar tab={tab} setTab={setTab} user={user} />
       <main>
-        {effectiveTab === "my" && <MyListTab lists={lists} currentWeek={currentWeek} user={user} onSelectVisitor={setSelected} />}
-        {effectiveTab === "all" && <AllGroupsTab lists={lists} currentWeek={currentWeek} onSelectVisitor={setSelected} user={user} />}
-        {effectiveTab === "manage" && user.isAdmin && <ManageTab lists={lists} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} />}
+        {tab === "my" && <MyListTab lists={lists} currentWeek={currentWeek} user={user} onSelectVisitor={setSelected} />}
+        {tab === "all" && <AllGroupsTab lists={lists} currentWeek={currentWeek} onSelectVisitor={setSelected} />}
+        {tab === "pastor" && <PastorTab pastorLists={pastorLists} user={user} onSelectVisitor={setSelected} />}
+        {tab === "manage" && user.isAdmin && <ManageTab lists={lists} pastorLists={pastorLists} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} members={members} />}
       </main>
       {selected && selectedVisitor && (
         <VisitorModal visitor={selectedVisitor} listId={selected.listId} listName={selected.listName}
-          user={user} onClose={() => setSelected(null)} />
+          listType={selected.listType} user={user} onClose={() => setSelected(null)} />
       )}
     </div>
   );

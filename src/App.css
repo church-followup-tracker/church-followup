@@ -33,6 +33,7 @@ main{padding-bottom:60px;}
 .visitor-name{font-size:13px;font-weight:500;color:#1A1A1A;}
 .visitor-sub{font-size:11px;color:#888;margin-top:1px;}
 .group-chip{font-size:12px;padding:3px 10px;border-radius:20px;font-weight:500;white-space:nowrap;}
+.role-chip{font-size:12px;padding:3px 10px;border-radius:20px;font-weight:500;white-space:nowrap;}
 .admin-chip{font-size:11px;padding:3px 8px;border-radius:20px;background:#1A1A1A;color:#fff;font-weight:500;}
 .status-chip{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;white-space:nowrap;}
 .note-chip{font-size:11px;padding:2px 7px;border-radius:20px;background:#EEEDFE;color:#26215C;border:0.5px solid #AFA9EC;white-space:nowrap;}
