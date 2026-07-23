@@ -70,6 +70,8 @@ select.field-input{cursor:pointer;}
 .comment-compose{display:flex;gap:8px;margin-top:12px;}
 .manage-card{background:#fff;border:0.5px solid #E0DFDB;border-radius:12px;padding:16px;margin-bottom:12px;}
 .manage-card-title{font-size:14px;font-weight:600;color:#1A1A1A;margin-bottom:12px;}
+.dash-card{background:#fff;border:0.5px solid #E0DFDB;border-radius:12px;padding:14px;margin-bottom:0;}
+.dash-section-title{font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;}
 .active-list-item{border:0.5px solid #E0DFDB;border-radius:8px;padding:10px 12px;margin-bottom:8px;}
 .manage-visitor-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:0.5px solid #F0EFEB;font-size:13px;}
 .manage-visitor-row:last-child{border-bottom:none;}

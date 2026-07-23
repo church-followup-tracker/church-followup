@@ -8,10 +8,10 @@ import "./App.css";
 
 const GROUPS = ["A", "B", "C", "D"];
 const GROUP_META = {
-  A: { bg: "#E6F1FB", color: "#0C447C", border: "#85B7EB" },
-  B: { bg: "#E1F5EE", color: "#085041", border: "#5DCAA5" },
-  C: { bg: "#FAEEDA", color: "#633806", border: "#EF9F27" },
-  D: { bg: "#FBEAF0", color: "#72243E", border: "#ED93B1" },
+  A: { bg: "#E6F1FB", color: "#0C447C", border: "#85B7EB", bar: "#185FA5" },
+  B: { bg: "#E1F5EE", color: "#085041", border: "#5DCAA5", bar: "#1D9E75" },
+  C: { bg: "#FAEEDA", color: "#633806", border: "#EF9F27", bar: "#BA7517" },
+  D: { bg: "#FBEAF0", color: "#72243E", border: "#ED93B1", bar: "#D4537E" },
 };
 const STATUS_META = {
   pending:      { label: "Pending",      bg: "#F1F0EC", color: "#5F5E5A", border: "#C4C2BA" },
@@ -20,8 +20,11 @@ const STATUS_META = {
   not_reached:  { label: "Not reached",  bg: "#FAEEDA", color: "#633806", border: "#EF9F27" },
   left_message: { label: "Left message", bg: "#EEEDFE", color: "#26215C", border: "#AFA9EC" },
 };
-const PASTOR_META = { bg: "#F0E6FA", color: "#7B3FA8", border: "#C9A0E8" };
-const STATUS_COLORS = { pending: "#C4C2BA", calling: "#85B7EB", called: "#97C459", not_reached: "#EF9F27", left_message: "#AFA9EC" };
+const STATUS_COLORS = {
+  pending: "#C4C2BA", calling: "#85B7EB", called: "#97C459",
+  not_reached: "#EF9F27", left_message: "#AFA9EC"
+};
+const PASTOR_META = { bg: "#F0E6FA", color: "#7B3FA8", border: "#C9A0E8", bar: "#7B3FA8" };
 
 function uid() { return "v" + Date.now() + "_" + Math.random().toString(36).slice(2, 6); }
 function slug(n) { return n.trim().toLowerCase().replace(/\s+/g, "_"); }
@@ -35,71 +38,75 @@ function fmtDT(ts) {
 function weekToMonth(week) {
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const now = new Date();
-  const startOfYear = new Date(now.getFullYear(), 0, 1);
-  const d = new Date(startOfYear.getTime() + (week - 1) * 7 * 24 * 60 * 60 * 1000);
+  const d = new Date(new Date(now.getFullYear(), 0, 1).getTime() + (week - 1) * 7 * 86400000);
   return months[d.getMonth()] + " " + d.getFullYear();
 }
-
-// Parse txt file: lines like "Name, Phone" or just "Name"
 function parseTxtFile(text) {
   return text.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
-    const parts = l.split(/[,\t|]+/).map(p => p.trim());
-    return { name: parts[0] || "", phone: parts[1] || "" };
+    const p = l.split(/[,\t|]+/).map(x => x.trim());
+    return { name: p[0] || "", phone: p[1] || "" };
   }).filter(r => r.name);
 }
 
-// ── MINI CHART ────────────────────────────────────────────────────────────
-function DonutChart({ visitors, size = 80 }) {
+// ── CHARTS ────────────────────────────────────────────────────────────────
+function DonutChart({ visitors, size = 80, label }) {
   const total = visitors.length;
-  if (total === 0) return <div style={{ width: size, height: size, borderRadius: "50%", background: "#eee", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#aaa" }}>0</div>;
+  if (total === 0) return (
+    <div style={{ width: size, height: size, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: size, height: size, borderRadius: "50%", background: "#F0EFEB", display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.15, color: "#aaa" }}>0%</div>
+      {label && <div style={{ fontSize: 11, color: "#888", marginTop: 4, textAlign: "center" }}>{label}</div>}
+    </div>
+  );
   const counts = Object.fromEntries(Object.keys(STATUS_META).map(k => [k, 0]));
   visitors.forEach(v => { counts[v.status || "pending"]++; });
   let offset = 0;
-  const r = size / 2;
-  const cx = r; const cy = r;
-  const ir = r * 0.55;
+  const r = size / 2, cx = r, cy = r, ir = r * 0.58;
   const slices = Object.entries(counts).filter(([, c]) => c > 0).map(([k, c]) => {
-    const pct = c / total;
-    const angle = pct * 360;
-    const start = offset;
-    offset += angle;
-    return { key: k, c, pct, start, angle };
+    const angle = (c / total) * 360;
+    const s = offset; offset += angle;
+    return { k, c, s, angle };
   });
-  function describeArc(cx, cy, r, startAngle, endAngle) {
-    const s = (startAngle - 90) * Math.PI / 180;
-    const e = (endAngle - 90) * Math.PI / 180;
-    const x1 = cx + r * Math.cos(s); const y1 = cy + r * Math.sin(s);
-    const x2 = cx + r * Math.cos(e); const y2 = cy + r * Math.sin(e);
-    const large = endAngle - startAngle > 180 ? 1 : 0;
-    return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+  function arc(cx, cy, r, s, e) {
+    const a1 = (s - 90) * Math.PI / 180, a2 = (e - 90) * Math.PI / 180;
+    const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+    const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
+    return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${e - s > 180 ? 1 : 0} 1 ${x2} ${y2} Z`;
   }
   const called = counts["called"];
+  const pct = Math.round(called / total * 100);
   return (
-    <div style={{ position: "relative", width: size, height: size }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <svg width={size} height={size}>
-        {slices.map(sl => (
-          <path key={sl.key} d={describeArc(cx, cy, r, sl.start, sl.start + sl.angle)}
-            fill={STATUS_COLORS[sl.key]} opacity={0.9} />
-        ))}
+        {slices.map(sl => <path key={sl.k} d={arc(cx, cy, r, sl.s, sl.s + sl.angle)} fill={STATUS_COLORS[sl.k]} opacity={0.92} />)}
         <circle cx={cx} cy={cy} r={ir} fill="white" />
-        <text x={cx} y={cy - 4} textAnchor="middle" fontSize={size * 0.18} fontWeight="600" fill="#1A1A1A">{Math.round(called / total * 100)}%</text>
-        <text x={cx} y={cy + 10} textAnchor="middle" fontSize={size * 0.13} fill="#888">done</text>
+        <text x={cx} y={cy - 3} textAnchor="middle" fontSize={size * 0.17} fontWeight="700" fill="#1A1A1A">{pct}%</text>
+        <text x={cx} y={cy + size * 0.14} textAnchor="middle" fontSize={size * 0.12} fill="#888">called</text>
       </svg>
+      {label && <div style={{ fontSize: 11, color: "#888", marginTop: 3, textAlign: "center" }}>{label}</div>}
     </div>
   );
 }
 
-function BarChart({ data, title, color = "#185FA5" }) {
+function ProgressBar({ value, max, color = "#97C459", height = 8 }) {
+  const pct = max > 0 ? Math.min((value / max) * 100, 100) : 0;
+  return (
+    <div style={{ height, background: "#F0EFEB", borderRadius: height / 2, overflow: "hidden" }}>
+      <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: height / 2, transition: "width 0.4s" }} />
+    </div>
+  );
+}
+
+function BarChart({ data, title, height = 80 }) {
   const max = Math.max(...data.map(d => d.value), 1);
   return (
-    <div style={{ marginBottom: 8 }}>
+    <div>
       {title && <div style={{ fontSize: 12, fontWeight: 600, color: "#444", marginBottom: 8 }}>{title}</div>}
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 80 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height }}>
         {data.map((d, i) => (
           <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-            <div style={{ fontSize: 10, color: "#888", fontWeight: 500 }}>{d.value}</div>
-            <div style={{ width: "100%", height: Math.max((d.value / max) * 60, 2), background: d.color || color, borderRadius: "3px 3px 0 0", transition: "height 0.3s" }} />
-            <div style={{ fontSize: 10, color: "#888", textAlign: "center", lineHeight: 1.2 }}>{d.label}</div>
+            {d.value > 0 && <div style={{ fontSize: 9, color: "#888" }}>{d.value}</div>}
+            <div style={{ width: "100%", height: Math.max((d.value / max) * (height - 20), d.value > 0 ? 3 : 0), background: d.color || "#185FA5", borderRadius: "3px 3px 0 0", transition: "height 0.3s" }} />
+            <div style={{ fontSize: 9, color: "#888", textAlign: "center", lineHeight: 1.1 }}>{d.label}</div>
           </div>
         ))}
       </div>
@@ -107,12 +114,12 @@ function BarChart({ data, title, color = "#185FA5" }) {
   );
 }
 
-function StatusLegend() {
+function StatusLegend({ compact }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+    <div style={{ display: "flex", flexWrap: "wrap", gap: compact ? 6 : 8, marginTop: 6 }}>
       {Object.entries(STATUS_META).map(([k, m]) => (
-        <div key={k} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
-          <div style={{ width: 10, height: 10, borderRadius: "50%", background: STATUS_COLORS[k] }} />
+        <div key={k} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: compact ? 10 : 11 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_COLORS[k], flexShrink: 0 }} />
           <span style={{ color: "#666" }}>{m.label}</span>
         </div>
       ))}
@@ -120,134 +127,358 @@ function StatusLegend() {
   );
 }
 
-// ── DASHBOARD ─────────────────────────────────────────────────────────────
-function Dashboard({ lists, pastorLists, currentWeek, members }) {
-  const activeFollowup = lists.filter(l => l.status === "active");
-  const activePastor = pastorLists.filter(l => l.status === "active");
-  const allFollowupVisitors = activeFollowup.flatMap(l => l.visitors || []);
-  const allPastorVisitors = activePastor.flatMap(l => l.visitors || []);
+function StatCard({ value, label, bg = "#F7F6F3", color = "#1A1A1A", border = "#E0DFDB", sub }) {
+  return (
+    <div style={{ flex: 1, background: bg, border: `0.5px solid ${border}`, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+      <div style={{ fontSize: 26, fontWeight: 700, color }}>{value}</div>
+      <div style={{ fontSize: 11, color: "#888", lineHeight: 1.3 }}>{label}</div>
+      {sub && <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+}
 
-  // Per-group stats
-  const groupStats = GROUPS.map(g => {
-    const glists = activeFollowup.filter(l => groupForOffset(l.createdWeek, currentWeek) === g);
-    const vs = glists.flatMap(l => l.visitors || []);
-    return { group: g, total: vs.length, called: vs.filter(v => v.status === "called").length };
-  });
+// ── PERSONAL DASHBOARD ────────────────────────────────────────────────────
+function PersonalDashboard({ user, lists, pastorLists, currentWeek, members, tasks }) {
+  const isPastor = user.isPastor;
 
-  // Weekly trend (last 8 weeks)
-  const weekData = Array.from({ length: 8 }, (_, i) => {
-    const w = currentWeek - 7 + i;
-    if (w < 1) return { label: `W${w < 1 ? "-" : w}`, value: 0 };
-    const wlists = lists.filter(l => l.createdWeek === w);
-    return { label: `W${w}`, value: wlists.flatMap(l => l.visitors || []).length };
-  });
+  // My assigned visitors
+  const myVisitors = isPastor
+    ? pastorLists.filter(l => l.status === "active").flatMap(l => (l.visitors || []).filter(v => v.assignedTo === user.name))
+    : lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === user.group)
+        .flatMap(l => (l.visitors || []).filter(v => v.assignedTo === user.name));
 
-  // Monthly trend
-  const monthlyMap = {};
-  lists.forEach(l => {
-    const m = weekToMonth(l.createdWeek);
-    monthlyMap[m] = (monthlyMap[m] || 0) + (l.visitors?.length || 0);
-  });
-  const monthData = Object.entries(monthlyMap).slice(-6).map(([label, value]) => ({ label: label.split(" ")[0], value }));
+  const myCalled = myVisitors.filter(v => v.status === "called").length;
+  const myNotReached = myVisitors.filter(v => v.status === "not_reached").length;
+  const myLeft = myVisitors.filter(v => v.status === "left_message").length;
+  const myPending = myVisitors.filter(v => !v.status || v.status === "pending").length;
 
-  // Per member stats
-  const memberStats = members.filter(m => !m.isAdmin && !m.isPastor && m.group).map(m => {
-    const mine = allFollowupVisitors.filter(v => v.assignedTo === m.name);
-    return { name: m.name, group: m.group, total: mine.length, called: mine.filter(v => v.status === "called").length };
-  });
+  // Team visitors (same group)
+  const teamVisitors = isPastor
+    ? pastorLists.filter(l => l.status === "active").flatMap(l => l.visitors || [])
+    : lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === user.group)
+        .flatMap(l => l.visitors || []);
+  const teamCalled = teamVisitors.filter(v => v.status === "called").length;
 
-  const calledTotal = allFollowupVisitors.filter(v => v.status === "called").length;
-  const calledPastor = allPastorVisitors.filter(v => v.status === "called").length;
+  // Overall
+  const allVisitors = lists.filter(l => l.status === "active").flatMap(l => l.visitors || []);
+  const allCalled = allVisitors.filter(v => v.status === "called").length;
+
+  // My status breakdown for bar chart
+  const myStatusData = [
+    { label: "Pending", value: myPending, color: STATUS_COLORS.pending },
+    { label: "Calling", value: myVisitors.filter(v => v.status === "calling").length, color: STATUS_COLORS.calling },
+    { label: "Called", value: myCalled, color: STATUS_COLORS.called },
+    { label: "No ans.", value: myNotReached, color: STATUS_COLORS.not_reached },
+    { label: "Msg left", value: myLeft, color: STATUS_COLORS.left_message },
+  ];
+
+  const gm = user.group ? GROUP_META[user.group] : PASTOR_META;
+
+  // My tasks
+  const myTasks = tasks.filter(t =>
+    t.assignedToType === "all" ||
+    (t.assignedToType === "member" && t.assignedTo === user.name) ||
+    (t.assignedToType === "group" && t.assignedTo === user.group) ||
+    (t.assignedToType === "pastors" && user.isPastor)
+  );
+  const myOpenTasks = myTasks.filter(t => t.status !== "done");
+  const myUrgentTasks = myOpenTasks.filter(t => t.priority === "urgent");
 
   return (
     <div className="tab-content">
-      {/* Summary cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-        <div className="dash-card">
-          <div className="dash-card-val">{allFollowupVisitors.length}</div>
-          <div className="dash-card-lbl">New visitors<br/>this cycle</div>
-        </div>
-        <div className="dash-card" style={{ background: "#EAF3DE", borderColor: "#97C459" }}>
-          <div className="dash-card-val" style={{ color: "#27500A" }}>{calledTotal}</div>
-          <div className="dash-card-lbl" style={{ color: "#3B6D11" }}>Contacts<br/>called ✓</div>
-        </div>
-        <div className="dash-card" style={{ background: PASTOR_META.bg, borderColor: PASTOR_META.border }}>
-          <div className="dash-card-val" style={{ color: PASTOR_META.color }}>{allPastorVisitors.length}</div>
-          <div className="dash-card-lbl" style={{ color: PASTOR_META.color }}>Lapsed<br/>members</div>
-        </div>
-        <div className="dash-card" style={{ background: "#FAEEDA", borderColor: "#EF9F27" }}>
-          <div className="dash-card-val" style={{ color: "#633806" }}>{allFollowupVisitors.length - calledTotal}</div>
-          <div className="dash-card-lbl" style={{ color: "#633806" }}>Still<br/>pending</div>
-        </div>
-      </div>
-
-      {/* Group donuts */}
-      <div className="manage-card">
-        <div className="manage-card-title">Group progress — Week {currentWeek}</div>
-        <div style={{ display: "flex", justifyContent: "space-around", alignItems: "center", padding: "8px 0" }}>
-          {groupStats.map(gs => {
-            const gm = GROUP_META[gs.group];
-            const vs = activeFollowup.filter(l => groupForOffset(l.createdWeek, currentWeek) === gs.group).flatMap(l => l.visitors || []);
-            return (
-              <div key={gs.group} style={{ textAlign: "center" }}>
-                <DonutChart visitors={vs} size={70} />
-                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: gm.color }}>Group {gs.group}</div>
-                <div style={{ fontSize: 11, color: "#888" }}>{gs.called}/{gs.total}</div>
-              </div>
-            );
-          })}
-        </div>
-        <StatusLegend />
-      </div>
-
-      {/* Weekly bar chart */}
-      <div className="manage-card">
-        <BarChart title="Weekly new visitors (last 8 weeks)" data={weekData} color="#185FA5" />
-      </div>
-
-      {/* Monthly bar chart */}
-      {monthData.length > 0 && (
-        <div className="manage-card">
-          <BarChart title="Monthly visitor totals" data={monthData} color="#7B3FA8" />
-        </div>
-      )}
-
-      {/* Per-member progress */}
-      {memberStats.length > 0 && (
-        <div className="manage-card">
-          <div className="manage-card-title">Team member progress</div>
-          {memberStats.map(ms => {
-            const pct = ms.total > 0 ? Math.round(ms.called / ms.total * 100) : 0;
-            const gm = GROUP_META[ms.group] || GROUP_META.A;
-            return (
-              <div key={ms.name} style={{ marginBottom: 10 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>{ms.name}</span>
-                  <span style={{ fontSize: 12, color: gm.color, background: gm.bg, padding: "1px 7px", borderRadius: 20, border: `1px solid ${gm.border}` }}>Grp {ms.group} · {ms.called}/{ms.total}</span>
-                </div>
-                <div style={{ height: 7, background: "#F0EFEB", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: pct + "%", background: "#97C459", borderRadius: 4, transition: "width 0.4s" }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Pastor progress */}
-      {allPastorVisitors.length > 0 && (
-        <div className="manage-card">
-          <div className="manage-card-title" style={{ color: PASTOR_META.color }}>Pastors — Lapsed member progress</div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <DonutChart visitors={allPastorVisitors} size={80} />
-            <div>
-              <div style={{ fontSize: 22, fontWeight: 600, color: PASTOR_META.color }}>{calledPastor}/{allPastorVisitors.length}</div>
-              <div style={{ fontSize: 12, color: "#888" }}>lapsed members contacted</div>
-              <StatusLegend />
-            </div>
+      {/* Personal header */}
+      <div style={{ background: gm.bg, border: `1px solid ${gm.border}`, borderRadius: 12, padding: 14, marginBottom: 12, display: "flex", gap: 14, alignItems: "center" }}>
+        <DonutChart visitors={myVisitors} size={76} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: gm.color }}>{user.name}</div>
+          <div style={{ fontSize: 12, color: gm.color, opacity: 0.8, marginBottom: 6 }}>
+            {isPastor ? "Pastor" : `Group ${user.group}`} · Week {currentWeek}
+          </div>
+          <div style={{ fontSize: 13, color: gm.color }}>
+            <b>{myCalled}</b> called · <b>{myNotReached}</b> not reached · <b>{myLeft}</b> msg left · <b>{myPending}</b> pending
           </div>
         </div>
+      </div>
+
+      {/* My stats */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <StatCard value={myVisitors.length} label="Assigned to me" />
+        <StatCard value={myCalled} label="Called ✓" bg="#EAF3DE" color="#27500A" border="#97C459" sub={myVisitors.length > 0 ? Math.round(myCalled / myVisitors.length * 100) + "%" : "0%"} />
+        <StatCard value={myPending} label="Still pending" bg="#FAEEDA" color="#633806" border="#EF9F27" />
+      </div>
+
+      {/* Tasks summary */}
+      {myOpenTasks.length > 0 && (
+        <div style={{ background: myUrgentTasks.length > 0 ? "#FBEAF0" : "#E6F1FB", border: `1px solid ${myUrgentTasks.length > 0 ? "#ED93B1" : "#85B7EB"}`, borderRadius: 10, padding: 12, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: myUrgentTasks.length > 0 ? "#72243E" : "#0C447C" }}>
+              {myUrgentTasks.length > 0 ? `⚠ ${myUrgentTasks.length} urgent task${myUrgentTasks.length > 1 ? "s" : ""}!` : `✅ ${myOpenTasks.length} open task${myOpenTasks.length > 1 ? "s" : ""}`}
+            </div>
+            <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{myTasks.filter(t => t.status === "done").length} completed · tap Tasks tab to view</div>
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: myUrgentTasks.length > 0 ? "#72243E" : "#0C447C" }}>{myOpenTasks.length}</div>
+        </div>
       )}
+
+      {/* My status breakdown bar */}
+      <div className="dash-card" style={{ marginBottom: 12 }}>
+        <div className="dash-section-title">My call breakdown</div>
+        <BarChart data={myStatusData} height={70} />
+        <StatusLegend compact />
+      </div>
+
+      {/* My progress vs team */}
+      <div className="dash-card" style={{ marginBottom: 12 }}>
+        <div className="dash-section-title">My progress vs {isPastor ? "pastoral team" : `Group ${user.group}`}</div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span style={{ fontWeight: 600 }}>Me — {user.name}</span>
+            <span style={{ color: "#888" }}>{myCalled}/{myVisitors.length} ({myVisitors.length > 0 ? Math.round(myCalled / myVisitors.length * 100) : 0}%)</span>
+          </div>
+          <ProgressBar value={myCalled} max={myVisitors.length} color={gm.bar || "#185FA5"} height={10} />
+        </div>
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span style={{ color: "#888" }}>{isPastor ? "All pastors" : `All Group ${user.group}`}</span>
+            <span style={{ color: "#888" }}>{teamCalled}/{teamVisitors.length} ({teamVisitors.length > 0 ? Math.round(teamCalled / teamVisitors.length * 100) : 0}%)</span>
+          </div>
+          <ProgressBar value={teamCalled} max={teamVisitors.length} color="#D0CFC9" height={10} />
+        </div>
+      </div>
+
+      {/* Overall church progress */}
+      <div className="dash-card" style={{ marginBottom: 12 }}>
+        <div className="dash-section-title">Overall church follow-up — Week {currentWeek}</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+          <DonutChart visitors={allVisitors} size={60} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{allCalled}<span style={{ fontSize: 13, fontWeight: 400, color: "#888" }}>/{allVisitors.length} called</span></div>
+            <ProgressBar value={allCalled} max={allVisitors.length} color="#97C459" height={8} />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {GROUPS.map(g => {
+            const gvs = lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === g).flatMap(l => l.visitors || []);
+            const gc = gvs.filter(v => v.status === "called").length;
+            const gm2 = GROUP_META[g];
+            return (
+              <div key={g} style={{ flex: 1, textAlign: "center", background: gm2.bg, border: `1px solid ${gm2.border}`, borderRadius: 8, padding: "6px 4px" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: gm2.color }}>{gvs.length > 0 ? Math.round(gc / gvs.length * 100) : 0}%</div>
+                <div style={{ fontSize: 10, color: gm2.color }}>Grp {g}</div>
+                <div style={{ fontSize: 9, color: "#aaa" }}>{gc}/{gvs.length}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ADMIN DASHBOARD ────────────────────────────────────────────────────────
+function AdminDashboard({ lists, pastorLists, currentWeek, members, tasks }) {
+  const activeFollowup = lists.filter(l => l.status === "active");
+  const activePastor = pastorLists.filter(l => l.status === "active");
+  const allFV = activeFollowup.flatMap(l => l.visitors || []);
+  const allPV = activePastor.flatMap(l => l.visitors || []);
+  const allCalled = allFV.filter(v => v.status === "called").length;
+  const pastorCalled = allPV.filter(v => v.status === "called").length;
+
+  const weekData = Array.from({ length: 8 }, (_, i) => {
+    const w = currentWeek - 7 + i;
+    if (w < 1) return { label: `—`, value: 0 };
+    const wvs = lists.filter(l => l.createdWeek === w).flatMap(l => l.visitors || []);
+    return { label: `W${w}`, value: wvs.length };
+  });
+
+  const monthlyMap = {};
+  lists.forEach(l => {
+    const m = weekToMonth(l.createdWeek);
+    if (!monthlyMap[m]) monthlyMap[m] = 0;
+    monthlyMap[m] += (l.visitors?.length || 0);
+  });
+  const monthData = Object.entries(monthlyMap).slice(-6).map(([label, value]) => ({ label: label.split(" ")[0], value, color: "#7B3FA8" }));
+
+  const teamMembers = members.filter(m => !m.isAdmin && !m.isPastor && m.group);
+  const pastors = members.filter(m => m.isPastor);
+
+  return (
+    <div className="tab-content">
+      {/* Top stats */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <StatCard value={allFV.length} label="New visitors this cycle" />
+        <StatCard value={allCalled} label="Called ✓" bg="#EAF3DE" color="#27500A" border="#97C459" sub={allFV.length > 0 ? Math.round(allCalled / allFV.length * 100) + "%" : ""} />
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <StatCard value={allPV.length} label="Lapsed members" bg={PASTOR_META.bg} color={PASTOR_META.color} border={PASTOR_META.border} />
+        <StatCard value={allFV.length - allCalled} label="Still pending" bg="#FAEEDA" color="#633806" border="#EF9F27" />
+      </div>
+
+      {/* Tasks summary */}
+      {tasks.length > 0 && (
+        <div className="dash-card" style={{ marginBottom: 12 }}>
+          <div className="dash-section-title">Tasks overview</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <StatCard value={tasks.filter(t => t.status === "open").length} label="To do" />
+            <StatCard value={tasks.filter(t => t.status === "in_progress").length} label="In progress" bg="#E6F1FB" color="#0C447C" border="#85B7EB" />
+            <StatCard value={tasks.filter(t => t.status === "done").length} label="Done ✓" bg="#EAF3DE" color="#27500A" border="#97C459" />
+          </div>
+          {tasks.filter(t => t.priority === "urgent" && t.status !== "done").length > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#72243E", background: "#FBEAF0", border: "1px solid #ED93B1", borderRadius: 8, padding: "6px 10px" }}>
+              ⚠ {tasks.filter(t => t.priority === "urgent" && t.status !== "done").length} urgent task(s) pending — check Tasks tab
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Group progress donuts */}
+      <div className="dash-card" style={{ marginBottom: 12 }}>
+        <div className="dash-section-title">Group progress — Week {currentWeek}</div>
+        <div style={{ display: "flex", justifyContent: "space-around", padding: "8px 0 4px" }}>
+          {GROUPS.map(g => {
+            const gvs = activeFollowup.filter(l => groupForOffset(l.createdWeek, currentWeek) === g).flatMap(l => l.visitors || []);
+            const gc = gvs.filter(v => v.status === "called").length;
+            return (
+              <div key={g} style={{ textAlign: "center" }}>
+                <DonutChart visitors={gvs} size={68} />
+                <div style={{ fontSize: 12, fontWeight: 600, color: GROUP_META[g].color, marginTop: 4 }}>Group {g}</div>
+                <div style={{ fontSize: 10, color: "#aaa" }}>{gc}/{gvs.length}</div>
+              </div>
+            );
+          })}
+        </div>
+        <StatusLegend compact />
+      </div>
+
+      {/* Team member individual progress */}
+      <div className="dash-card" style={{ marginBottom: 12 }}>
+        <div className="dash-section-title">Individual team member progress</div>
+        {teamMembers.length === 0 ? <p className="empty-note">No team members added yet.</p>
+          : teamMembers.map(m => {
+            const mine = allFV.filter(v => v.assignedTo === m.name);
+            const mCalled = mine.filter(v => v.status === "called").length;
+            const pct = mine.length > 0 ? Math.round(mCalled / mine.length * 100) : 0;
+            const gm = GROUP_META[m.group] || GROUP_META.A;
+            return (
+              <div key={m.id} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>{m.name}</span>
+                    <span style={{ fontSize: 10, marginLeft: 6, padding: "1px 6px", borderRadius: 20, background: gm.bg, color: gm.color, border: `1px solid ${gm.border}` }}>Grp {m.group}</span>
+                  </div>
+                  <span style={{ fontSize: 12, color: "#888" }}>{mCalled}/{mine.length} · {pct}%</span>
+                </div>
+                <ProgressBar value={mCalled} max={mine.length} color={gm.bar} height={8} />
+                <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                  {Object.entries(STATUS_META).map(([k, meta]) => {
+                    const cnt = mine.filter(v => (v.status || "pending") === k).length;
+                    if (cnt === 0) return null;
+                    return <span key={k} style={{ fontSize: 9, padding: "1px 5px", borderRadius: 10, background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>{cnt} {meta.label}</span>;
+                  })}
+                </div>
+              </div>
+            );
+          })
+        }
+      </div>
+
+      {/* Pastor individual progress */}
+      {pastors.length > 0 && (
+        <div className="dash-card" style={{ marginBottom: 12 }}>
+          <div className="dash-section-title">Pastor progress — Lapsed members</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+            <DonutChart visitors={allPV} size={60} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: PASTOR_META.color }}>{pastorCalled}/{allPV.length}</div>
+              <div style={{ fontSize: 12, color: "#888" }}>total lapsed members contacted</div>
+              <ProgressBar value={pastorCalled} max={allPV.length} color={PASTOR_META.bar} height={8} />
+            </div>
+          </div>
+          {pastors.map(p => {
+            const mine = allPV.filter(v => v.assignedTo === p.name);
+            const pCalled = mine.filter(v => v.status === "called").length;
+            return (
+              <div key={p.id} style={{ marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>{p.name}</span>
+                  <span style={{ fontSize: 12, color: "#888" }}>{pCalled}/{mine.length} · {mine.length > 0 ? Math.round(pCalled / mine.length * 100) : 0}%</span>
+                </div>
+                <ProgressBar value={pCalled} max={mine.length} color={PASTOR_META.bar} height={7} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Weekly trend */}
+      <div className="dash-card" style={{ marginBottom: 12 }}>
+        <BarChart data={weekData} title="New visitors per week (last 8 weeks)" height={90} />
+      </div>
+
+      {/* Monthly trend */}
+      {monthData.length > 0 && (
+        <div className="dash-card" style={{ marginBottom: 12 }}>
+          <BarChart data={monthData} title="Monthly visitor totals" height={90} />
+        </div>
+      )}
+
+      {/* Overall summary */}
+      <div className="dash-card">
+        <div className="dash-section-title">Overall church follow-up</div>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span>New visitor follow-up (all groups)</span>
+            <span style={{ color: "#888" }}>{allCalled}/{allFV.length}</span>
+          </div>
+          <ProgressBar value={allCalled} max={allFV.length} color="#97C459" height={10} />
+        </div>
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span>Lapsed member follow-up (pastors)</span>
+            <span style={{ color: "#888" }}>{pastorCalled}/{allPV.length}</span>
+          </div>
+          <ProgressBar value={pastorCalled} max={allPV.length} color={PASTOR_META.bar} height={10} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── FORCE PIN CHANGE ──────────────────────────────────────────────────────
+function ForcePinChange({ user, onDone }) {
+  const [pin, setPin] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleChange() {
+    if (pin.length < 4) { setErr("PIN must be at least 4 characters."); return; }
+    if (pin !== confirm) { setErr("PINs don't match."); return; }
+    setSaving(true); setErr("");
+    try {
+      await updateDoc(doc(db, "members", user.key), { pin, mustChangePIN: false });
+      onDone(pin);
+    } catch { setErr("Error saving PIN. Try again."); setSaving(false); }
+  }
+
+  return (
+    <div className="login-wrap">
+      <div className="login-box">
+        <div style={{ fontSize: 36, textAlign: "center", marginBottom: 8 }}>🔑</div>
+        <h1 className="login-title">Set your PIN</h1>
+        <p className="login-sub">Welcome, {user.name}! Before you continue, please set a personal PIN. Your admin set a temporary one — only you will know your new PIN.</p>
+        <label className="field-label" style={{ marginTop: 16 }}>New PIN (4+ characters)</label>
+        <input className="field-input" type="password" placeholder="Choose a PIN" value={pin}
+          onChange={e => setPin(e.target.value)} />
+        <label className="field-label" style={{ marginTop: 12 }}>Confirm PIN</label>
+        <input className="field-input" type="password" placeholder="Type it again" value={confirm}
+          onChange={e => setConfirm(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && handleChange()} />
+        {err && <p className="err-text">{err}</p>}
+        <button className="btn-primary full" style={{ marginTop: 18 }} onClick={handleChange} disabled={saving}>
+          {saving ? "Saving…" : "Set my PIN & continue"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -267,15 +498,15 @@ function LoginScreen({ onLogin }) {
       const snap = await getDoc(doc(db, "members", key));
       if (!snap.exists()) {
         if (key === "admin" && pin === "admin1234") {
-          await setDoc(doc(db, "members", "admin"), { name: "Admin", group: null, isAdmin: true, isPastor: false, pin: "admin1234" });
-          onLogin({ name: "Admin", group: null, isAdmin: true, isPastor: false, key: "admin" });
+          await setDoc(doc(db, "members", "admin"), { name: "Admin", group: null, isAdmin: true, isPastor: false, pin: "admin1234", mustChangePIN: false });
+          onLogin({ name: "Admin", group: null, isAdmin: true, isPastor: false, key: "admin", mustChangePIN: false });
           return;
         }
         setErr("Name not found. Ask your admin to add you."); setLoading(false); return;
       }
       const m = snap.data();
       if (m.pin !== pin) { setErr("Wrong PIN. Try again."); setLoading(false); return; }
-      onLogin({ name: m.name, group: m.group || null, isAdmin: !!m.isAdmin, isPastor: !!m.isPastor, key });
+      onLogin({ name: m.name, group: m.group || null, isAdmin: !!m.isAdmin, isPastor: !!m.isPastor, key, mustChangePIN: !!m.mustChangePIN });
     } catch { setErr("Connection error. Check your internet."); setLoading(false); }
   }
 
@@ -295,9 +526,7 @@ function LoginScreen({ onLogin }) {
         <button className="btn-primary full" style={{ marginTop: 18 }} onClick={handleLogin} disabled={loading}>
           {loading ? "Signing in…" : "Sign in"}
         </button>
-        <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", marginTop: 12 }}>
-          First time? Ask your admin for your PIN.
-        </p>
+        <p style={{ fontSize: 11, color: "#aaa", textAlign: "center", marginTop: 12 }}>First time? Ask your admin for your temporary PIN.</p>
       </div>
     </div>
   );
@@ -324,18 +553,16 @@ function Header({ user, currentWeek, onLogout }) {
 
 // ── NAV ───────────────────────────────────────────────────────────────────
 function NavBar({ tab, setTab, user }) {
-  const tabs = [];
-  if (user.isAdmin) tabs.push({ id: "dashboard", label: "📊 Dashboard" });
+  const tabs = [{ id: "dashboard", label: "📊 Dashboard" }];
   if (!user.isPastor) tabs.push({ id: "my", label: "My list" });
   tabs.push({ id: "all", label: "All groups" });
   if (user.isPastor || user.isAdmin) tabs.push({ id: "pastor", label: "Lapsed" });
+  tabs.push({ id: "tasks", label: "✅ Tasks" });
   if (user.isAdmin) tabs.push({ id: "manage", label: "Manage" });
   return (
     <nav className="nav-bar" style={{ overflowX: "auto" }}>
       {tabs.map(t => (
-        <button key={t.id} className={`nav-btn${tab === t.id ? " active" : ""}`} onClick={() => setTab(t.id)}>
-          {t.label}
-        </button>
+        <button key={t.id} className={`nav-btn${tab === t.id ? " active" : ""}`} onClick={() => setTab(t.id)}>{t.label}</button>
       ))}
     </nav>
   );
@@ -368,11 +595,10 @@ function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
 
   async function updateStatus(status) {
     const col = listType === "pastor" ? "pastor_lists" : "lists";
-    const ref = doc(db, col, listId);
-    const snap = await getDoc(ref);
+    const snap = await getDoc(doc(db, col, listId));
     if (!snap.exists()) return;
     const visitors = snap.data().visitors.map(v => v.id === lv.id ? { ...v, status, calledBy: user.name } : v);
-    await updateDoc(ref, { visitors });
+    await updateDoc(doc(db, col, listId), { visitors });
     setLv(p => ({ ...p, status, calledBy: user.name }));
   }
 
@@ -380,12 +606,11 @@ function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
     if (!comment.trim()) return;
     setSaving(true);
     const col = listType === "pastor" ? "pastor_lists" : "lists";
-    const ref = doc(db, col, listId);
-    const snap = await getDoc(ref);
+    const snap = await getDoc(doc(db, col, listId));
     if (!snap.exists()) { setSaving(false); return; }
     const nc = { id: uid(), text: comment.trim(), author: user.name, ts: Date.now() };
     const visitors = snap.data().visitors.map(v => v.id === lv.id ? { ...v, comments: [...(v.comments || []), nc] } : v);
-    await updateDoc(ref, { visitors });
+    await updateDoc(doc(db, col, listId), { visitors });
     setLv(p => ({ ...p, comments: [...(p.comments || []), nc] }));
     setComment(""); setSaving(false);
   }
@@ -440,19 +665,10 @@ function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
 function MyListTab({ lists, currentWeek, user, onSelectVisitor }) {
   const myLists = lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === user.group);
   const myVisitors = myLists.flatMap(l => (l.visitors || []).filter(v => v.assignedTo === user.name).map(v => ({ ...v, listId: l.id, listName: l.name })));
-  const called = myVisitors.filter(v => v.status === "called").length;
   const gm = GROUP_META[user.group] || GROUP_META.A;
   if (!user.group) return <div className="empty-state">You're an admin — use the Dashboard or Manage tab.</div>;
   return (
     <div className="tab-content">
-      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14, background: "#fff", border: "0.5px solid #E0DFDB", borderRadius: 12, padding: 14 }}>
-        <DonutChart visitors={myVisitors} size={72} />
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 600 }}>{user.name}</div>
-          <div style={{ fontSize: 13, color: "#888" }}>{called} of {myVisitors.length} contacts called</div>
-          <div style={{ fontSize: 12, color: gm.color, marginTop: 4, background: gm.bg, display: "inline-block", padding: "2px 8px", borderRadius: 20, border: `1px solid ${gm.border}` }}>Group {user.group}</div>
-        </div>
-      </div>
       {myVisitors.length === 0
         ? <div className="empty-state">No contacts assigned to you this week.<br />Ask your admin to assign contacts.</div>
         : myLists.map(list => {
@@ -479,21 +695,20 @@ function AllGroupsTab({ lists, currentWeek, onSelectVisitor }) {
     <div className="tab-content">
       {GROUPS.map(g => {
         const gm = GROUP_META[g];
-        const glists = lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === g);
-        const visitors = glists.flatMap(l => (l.visitors || []).map(v => ({ ...v, listId: l.id, listName: l.name })));
-        const called = visitors.filter(v => v.status === "called").length;
+        const gvs = lists.filter(l => l.status === "active" && groupForOffset(l.createdWeek, currentWeek) === g).flatMap(l => (l.visitors || []).map(v => ({ ...v, listId: l.id, listName: l.name })));
+        const called = gvs.filter(v => v.status === "called").length;
         return (
           <div key={g} className="list-card" style={{ padding: 0, overflow: "hidden", marginBottom: 10 }}>
             <div className="group-card-header" style={{ background: gm.bg, borderBottom: `1px solid ${gm.border}` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <DonutChart visitors={visitors} size={36} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <DonutChart visitors={gvs} size={34} />
                 <span style={{ fontWeight: 600, color: gm.color }}>Group {g}</span>
               </div>
-              <span style={{ fontSize: 12, color: gm.color }}>{called}/{visitors.length} called</span>
+              <span style={{ fontSize: 12, color: gm.color }}>{called}/{gvs.length} called</span>
             </div>
             <div style={{ padding: "8px 14px 10px" }}>
-              {visitors.length === 0 ? <p className="empty-note">No contacts assigned this week.</p>
-                : visitors.map(v => <VisitorRow key={v.id} visitor={v} listName={v.listName} assignedTo={v.assignedTo}
+              {gvs.length === 0 ? <p className="empty-note">No contacts assigned this week.</p>
+                : gvs.map(v => <VisitorRow key={v.id} visitor={v} listName={v.listName} assignedTo={v.assignedTo}
                     onClick={() => onSelectVisitor({ visitor: v, listId: v.listId, listName: v.listName, listType: "followup" })} />)
               }
             </div>
@@ -518,8 +733,7 @@ function PastorTab({ pastorLists, user, onSelectVisitor }) {
           <p style={{ fontSize: 12, color: PASTOR_META.color, marginTop: 2 }}>{called} of {allVs.length} members contacted</p>
         </div>
       </div>
-      {active.length === 0
-        ? <div className="empty-state">No lapsed member lists yet.<br />Admin can add them in the Manage tab.</div>
+      {active.length === 0 ? <div className="empty-state">No lapsed member lists yet.</div>
         : active.map(list => {
           const vs = (list.visitors || []).filter(v => user.isAdmin || !v.assignedTo || v.assignedTo === user.name);
           if (!vs.length) return null;
@@ -539,44 +753,41 @@ function PastorTab({ pastorLists, user, onSelectVisitor }) {
   );
 }
 
-// ── FILE UPLOAD HELPER ────────────────────────────────────────────────────
+// ── FILE UPLOAD ───────────────────────────────────────────────────────────
 function FileUploadArea({ onParsed, accent = "#185FA5", accentBg = "#E6F1FB" }) {
   const ref = useRef();
   const [dragging, setDragging] = useState(false);
-
   function handleFile(file) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = e => onParsed(parseTxtFile(e.target.result));
     reader.readAsText(file);
   }
-
   return (
-    <div
-      style={{ border: `1.5px dashed ${dragging ? accent : "#D0CFC9"}`, borderRadius: 8, padding: 16, textAlign: "center", background: dragging ? accentBg : "#FAFAF8", cursor: "pointer", marginBottom: 10, transition: "all 0.15s" }}
+    <div style={{ border: `1.5px dashed ${dragging ? accent : "#D0CFC9"}`, borderRadius: 8, padding: 14, textAlign: "center", background: dragging ? accentBg : "#FAFAF8", cursor: "pointer", marginBottom: 10 }}
       onDragOver={e => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
       onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
-      onClick={() => ref.current.click()}
-    >
+      onClick={() => ref.current.click()}>
       <input ref={ref} type="file" accept=".txt,.csv" style={{ display: "none" }} onChange={e => handleFile(e.target.files[0])} />
-      <div style={{ fontSize: 24, marginBottom: 4 }}>📂</div>
-      <div style={{ fontSize: 13, color: "#888" }}>Drop a .txt or .csv file here, or <span style={{ color: accent, fontWeight: 500 }}>click to browse</span></div>
-      <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>Format: Name, Phone (one per line)</div>
+      <div style={{ fontSize: 22, marginBottom: 4 }}>📂</div>
+      <div style={{ fontSize: 13, color: "#888" }}>Drop .txt or .csv here, or <span style={{ color: accent, fontWeight: 500 }}>click to browse</span></div>
+      <div style={{ fontSize: 11, color: "#aaa", marginTop: 3 }}>Format: Name, Phone (one per line)</div>
     </div>
   );
 }
 
 // ── MANAGE TAB ────────────────────────────────────────────────────────────
 function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, members }) {
-  const [activeSection, setActiveSection] = useState("newvisitors");
+  const [sec, setSec] = useState("newvisitors");
   const [nvName, setNvName] = useState(""); const [nvWeek, setNvWeek] = useState(currentWeek);
   const [nvEntries, setNvEntries] = useState([]); const [nvInput, setNvInput] = useState(""); const [nvPhone, setNvPhone] = useState("");
   const [nvMsg, setNvMsg] = useState(""); const [nvSaving, setNvSaving] = useState(false);
   const [lmName, setLmName] = useState("");
   const [lmEntries, setLmEntries] = useState([]); const [lmInput, setLmInput] = useState(""); const [lmPhone, setLmPhone] = useState("");
   const [lmMsg, setLmMsg] = useState(""); const [lmSaving, setLmSaving] = useState(false);
-  const [memName, setMemName] = useState(""); const [memRole, setMemRole] = useState("A"); const [memPin, setMemPin] = useState(""); const [memMsg, setMemMsg] = useState("");
+  const [memName, setMemName] = useState(""); const [memRole, setMemRole] = useState("A");
+  const [memPin, setMemPin] = useState(""); const [memMsg, setMemMsg] = useState("");
   const [newPin, setNewPin] = useState(""); const [pinMsg, setPinMsg] = useState("");
   const [assignMsg, setAssignMsg] = useState("");
 
@@ -610,10 +821,13 @@ function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, member
 
   async function addMember() {
     if (!memName.trim() || !memPin.trim()) { setMemMsg("Name and PIN required."); return; }
+    if (memPin.trim().length < 4) { setMemMsg("PIN must be at least 4 characters."); return; }
     const key = slug(memName);
     const isPastor = memRole === "pastor";
-    await setDoc(doc(db, "members", key), { name: memName.trim(), group: isPastor ? null : memRole, isAdmin: false, isPastor, pin: memPin.trim() });
-    setMemName(""); setMemPin(""); setMemMsg("✓ Member added!"); setTimeout(() => setMemMsg(""), 3000);
+    await setDoc(doc(db, "members", key), { name: memName.trim(), group: isPastor ? null : memRole, isAdmin: false, isPastor, pin: memPin.trim(), mustChangePIN: true });
+    setMemName(""); setMemPin("");
+    setMemMsg(`✓ ${memName.trim()} added. They will be prompted to set their own PIN on first login.`);
+    setTimeout(() => setMemMsg(""), 5000);
   }
 
   async function deleteMember(id) { if (window.confirm("Remove this member?")) await deleteDoc(doc(db, "members", id)); }
@@ -637,27 +851,27 @@ function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, member
 
   const sections = [
     { id: "newvisitors", label: "👥 New visitors" },
-    { id: "lapsed", label: "🙏 Lapsed members" },
+    { id: "lapsed", label: "🙏 Lapsed" },
     { id: "members", label: "👤 Team" },
     { id: "week", label: "📅 Week" },
-    { id: "pin", label: "🔑 PIN" },
+    { id: "pin", label: "🔑 My PIN" },
   ];
 
   return (
     <div className="tab-content">
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
         {sections.map(s => (
-          <button key={s.id} onClick={() => setActiveSection(s.id)}
+          <button key={s.id} onClick={() => setSec(s.id)}
             style={{ fontSize: 12, padding: "5px 10px", borderRadius: 20, border: "0.5px solid", cursor: "pointer",
-              background: activeSection === s.id ? "#185FA5" : "#F7F6F3",
-              color: activeSection === s.id ? "#fff" : "#444",
-              borderColor: activeSection === s.id ? "#185FA5" : "#D0CFC9" }}>
+              background: sec === s.id ? "#185FA5" : "#F7F6F3",
+              color: sec === s.id ? "#fff" : "#444",
+              borderColor: sec === s.id ? "#185FA5" : "#D0CFC9" }}>
             {s.label}
           </button>
         ))}
       </div>
 
-      {activeSection === "week" && (
+      {sec === "week" && (
         <div className="manage-card">
           <div className="manage-card-title">Current week</div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -668,127 +882,117 @@ function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, member
         </div>
       )}
 
-      {activeSection === "newvisitors" && (
-        <>
-          <div className="manage-card">
-            <div className="manage-card-title">Add new Sunday visitor list</div>
-            <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Upload a .txt file or add names one by one. Contacts are randomly assigned to team members.</p>
-            <label className="field-label">List name</label>
-            <input className="field-input" placeholder='e.g. "July 20 Sunday"' value={nvName} onChange={e => setNvName(e.target.value)} style={{ marginBottom: 10 }} />
-            <label className="field-label">Week number</label>
-            <input type="number" className="field-input" style={{ width: 80, marginBottom: 12 }} value={nvWeek} onChange={e => setNvWeek(e.target.value)} />
-            <FileUploadArea onParsed={rows => setNvEntries(p => [...p, ...rows])} />
-            <label className="field-label">Or add one by one</label>
-            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-              <input className="field-input" placeholder="Full name" value={nvInput} onChange={e => setNvInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addNvEntry()} />
-              <input className="field-input" placeholder="Phone (optional)" value={nvPhone} onChange={e => setNvPhone(e.target.value)} onKeyDown={e => e.key === "Enter" && addNvEntry()} style={{ maxWidth: 130 }} />
-              <button className="btn-outline" onClick={addNvEntry}>Add</button>
+      {sec === "newvisitors" && (<>
+        <div className="manage-card">
+          <div className="manage-card-title">Add new Sunday visitor list</div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Upload a .txt file or add names one by one. Contacts are randomly assigned to team members.</p>
+          <label className="field-label">List name</label>
+          <input className="field-input" placeholder='e.g. "July 20 Sunday"' value={nvName} onChange={e => setNvName(e.target.value)} style={{ marginBottom: 10 }} />
+          <label className="field-label">Week number</label>
+          <input type="number" className="field-input" style={{ width: 80, marginBottom: 12 }} value={nvWeek} onChange={e => setNvWeek(e.target.value)} />
+          <FileUploadArea onParsed={rows => setNvEntries(p => [...p, ...rows])} />
+          <label className="field-label">Or add one by one</label>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            <input className="field-input" placeholder="Full name" value={nvInput} onChange={e => setNvInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addNvEntry()} />
+            <input className="field-input" placeholder="Phone" value={nvPhone} onChange={e => setNvPhone(e.target.value)} style={{ maxWidth: 120 }} />
+            <button className="btn-outline" onClick={addNvEntry}>Add</button>
+          </div>
+          {nvEntries.length > 0 && (
+            <div className="chip-row">
+              {nvEntries.map((e, i) => (
+                <span key={i} className="name-chip">{e.name}{e.phone ? ` · ${e.phone}` : ""}
+                  <button className="chip-del" onClick={() => setNvEntries(p => p.filter((_, j) => j !== i))}>×</button>
+                </span>
+              ))}
             </div>
-            {nvEntries.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>{nvEntries.length} visitor{nvEntries.length !== 1 ? "s" : ""} ready to add</div>
-                <div className="chip-row">
-                  {nvEntries.map((e, i) => (
-                    <span key={i} className="name-chip">{e.name}{e.phone ? ` · ${e.phone}` : ""}
-                      <button className="chip-del" onClick={() => setNvEntries(p => p.filter((_, j) => j !== i))}>×</button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-            {nvMsg && <p className={nvMsg.startsWith("✓") ? "success-text" : "err-text"}>{nvMsg}</p>}
-            <button className="btn-primary full" style={{ marginTop: 8 }} onClick={createNewVisitorList} disabled={nvSaving}>
-              {nvSaving ? "Saving…" : `Create & assign list (${nvEntries.length} visitors)`}
-            </button>
-          </div>
-          <div className="manage-card">
-            <div className="manage-card-title">Active visitor lists</div>
-            {assignMsg && <p className="success-text" style={{ marginBottom: 8 }}>{assignMsg}</p>}
-            {lists.filter(l => l.status === "active").length === 0
-              ? <p className="empty-note">No active lists.</p>
-              : lists.filter(l => l.status === "active").sort((a, b) => b.createdWeek - a.createdWeek).map(list => (
-                <div key={list.id} className="active-list-item">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
-                      <div style={{ fontSize: 11, color: "#888" }}>Week {list.createdWeek} · {list.visitors?.length || 0} visitors</div>
-                    </div>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => reassignList(list.id)}>↺ Reassign</button>
-                      <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => updateDoc(doc(db, "lists", list.id), { status: "archived" })}>Archive</button>
-                    </div>
+          )}
+          {nvMsg && <p className={nvMsg.startsWith("✓") ? "success-text" : "err-text"}>{nvMsg}</p>}
+          <button className="btn-primary full" style={{ marginTop: 8 }} onClick={createNewVisitorList} disabled={nvSaving}>
+            {nvSaving ? "Saving…" : `Create & assign (${nvEntries.length} visitors)`}
+          </button>
+        </div>
+        <div className="manage-card">
+          <div className="manage-card-title">Active visitor lists</div>
+          {assignMsg && <p className="success-text" style={{ marginBottom: 8 }}>{assignMsg}</p>}
+          {lists.filter(l => l.status === "active").length === 0 ? <p className="empty-note">No active lists.</p>
+            : lists.filter(l => l.status === "active").sort((a, b) => b.createdWeek - a.createdWeek).map(list => (
+              <div key={list.id} className="active-list-item">
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div>
+                    <div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
+                    <div style={{ fontSize: 11, color: "#888" }}>Week {list.createdWeek} · {list.visitors?.length || 0} visitors</div>
                   </div>
-                  {(list.visitors || []).map(v => (
-                    <div key={v.id} className="manage-visitor-row">
-                      <span>{v.name}{v.phone ? <span style={{ color: "#aaa", fontSize: 11 }}> · {v.phone}</span> : ""}</span>
-                      <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
-                    </div>
-                  ))}
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => reassignList(list.id)}>↺ Reassign</button>
+                    <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => updateDoc(doc(db, "lists", list.id), { status: "archived" })}>Archive</button>
+                  </div>
                 </div>
-              ))
-            }
-          </div>
-        </>
-      )}
+                {(list.visitors || []).map(v => (
+                  <div key={v.id} className="manage-visitor-row">
+                    <span>{v.name}{v.phone ? <span style={{ color: "#aaa", fontSize: 11 }}> · {v.phone}</span> : ""}</span>
+                    <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
+                  </div>
+                ))}
+              </div>
+            ))
+          }
+        </div>
+      </>)}
 
-      {activeSection === "lapsed" && (
-        <>
-          <div className="manage-card">
-            <div className="manage-card-title" style={{ color: PASTOR_META.color }}>Add lapsed member list</div>
-            <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Upload a .txt file or add names one by one. Contacts are assigned to pastors.</p>
-            <label className="field-label">List name</label>
-            <input className="field-input" placeholder='e.g. "July 2026 Lapsed"' value={lmName} onChange={e => setLmName(e.target.value)} style={{ marginBottom: 12 }} />
-            <FileUploadArea onParsed={rows => setLmEntries(p => [...p, ...rows])} accent={PASTOR_META.color} accentBg={PASTOR_META.bg} />
-            <label className="field-label">Or add one by one</label>
-            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-              <input className="field-input" placeholder="Full name" value={lmInput} onChange={e => setLmInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addLmEntry()} />
-              <input className="field-input" placeholder="Phone (optional)" value={lmPhone} onChange={e => setLmPhone(e.target.value)} onKeyDown={e => e.key === "Enter" && addLmEntry()} style={{ maxWidth: 130 }} />
-              <button className="btn-outline" onClick={addLmEntry}>Add</button>
+      {sec === "lapsed" && (<>
+        <div className="manage-card">
+          <div className="manage-card-title" style={{ color: PASTOR_META.color }}>Add lapsed member list</div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Upload a .txt file or add names one by one. Contacts are assigned to pastors.</p>
+          <label className="field-label">List name</label>
+          <input className="field-input" placeholder='e.g. "July 2026 Lapsed"' value={lmName} onChange={e => setLmName(e.target.value)} style={{ marginBottom: 12 }} />
+          <FileUploadArea onParsed={rows => setLmEntries(p => [...p, ...rows])} accent={PASTOR_META.color} accentBg={PASTOR_META.bg} />
+          <label className="field-label">Or add one by one</label>
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+            <input className="field-input" placeholder="Full name" value={lmInput} onChange={e => setLmInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addLmEntry()} />
+            <input className="field-input" placeholder="Phone" value={lmPhone} onChange={e => setLmPhone(e.target.value)} style={{ maxWidth: 120 }} />
+            <button className="btn-outline" onClick={addLmEntry}>Add</button>
+          </div>
+          {lmEntries.length > 0 && (
+            <div className="chip-row">
+              {lmEntries.map((e, i) => (
+                <span key={i} className="name-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, borderColor: PASTOR_META.border }}>
+                  {e.name}{e.phone ? ` · ${e.phone}` : ""}
+                  <button className="chip-del" onClick={() => setLmEntries(p => p.filter((_, j) => j !== i))}>×</button>
+                </span>
+              ))}
             </div>
-            {lmEntries.length > 0 && (
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>{lmEntries.length} member{lmEntries.length !== 1 ? "s" : ""} ready to add</div>
-                <div className="chip-row">
-                  {lmEntries.map((e, i) => (
-                    <span key={i} className="name-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, borderColor: PASTOR_META.border }}>{e.name}{e.phone ? ` · ${e.phone}` : ""}
-                      <button className="chip-del" onClick={() => setLmEntries(p => p.filter((_, j) => j !== i))}>×</button>
-                    </span>
-                  ))}
+          )}
+          {lmMsg && <p className={lmMsg.startsWith("✓") ? "success-text" : "err-text"}>{lmMsg}</p>}
+          <button className="btn-primary full" style={{ marginTop: 8, background: PASTOR_META.color }} onClick={createLapsedList} disabled={lmSaving}>
+            {lmSaving ? "Saving…" : `Create & assign to pastors (${lmEntries.length} members)`}
+          </button>
+        </div>
+        <div className="manage-card">
+          <div className="manage-card-title">Active lapsed member lists</div>
+          {pastorLists.filter(l => l.status === "active").length === 0 ? <p className="empty-note">No active lapsed member lists.</p>
+            : pastorLists.filter(l => l.status === "active").map(list => (
+              <div key={list.id} className="active-list-item">
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div><div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
+                  <div style={{ fontSize: 11, color: "#888" }}>{list.visitors?.length || 0} members</div></div>
+                  <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => updateDoc(doc(db, "pastor_lists", list.id), { status: "archived" })}>Archive</button>
                 </div>
-              </div>
-            )}
-            {lmMsg && <p className={lmMsg.startsWith("✓") ? "success-text" : "err-text"}>{lmMsg}</p>}
-            <button className="btn-primary full" style={{ marginTop: 8, background: PASTOR_META.color }} onClick={createLapsedList} disabled={lmSaving}>
-              {lmSaving ? "Saving…" : `Create & assign to pastors (${lmEntries.length} members)`}
-            </button>
-          </div>
-          <div className="manage-card">
-            <div className="manage-card-title">Active lapsed member lists</div>
-            {pastorLists.filter(l => l.status === "active").length === 0
-              ? <p className="empty-note">No active lapsed member lists.</p>
-              : pastorLists.filter(l => l.status === "active").map(list => (
-                <div key={list.id} className="active-list-item">
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                    <div><div style={{ fontWeight: 500, fontSize: 13 }}>📋 {list.name}</div>
-                    <div style={{ fontSize: 11, color: "#888" }}>{list.visitors?.length || 0} members</div></div>
-                    <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => updateDoc(doc(db, "pastor_lists", list.id), { status: "archived" })}>Archive</button>
+                {(list.visitors || []).map(v => (
+                  <div key={v.id} className="manage-visitor-row">
+                    <span>{v.name}{v.phone ? <span style={{ color: "#aaa", fontSize: 11 }}> · {v.phone}</span> : ""}</span>
+                    <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
                   </div>
-                  {(list.visitors || []).map(v => (
-                    <div key={v.id} className="manage-visitor-row">
-                      <span>{v.name}{v.phone ? <span style={{ color: "#aaa", fontSize: 11 }}> · {v.phone}</span> : ""}</span>
-                      <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
-                    </div>
-                  ))}
-                </div>
-              ))
-            }
-          </div>
-        </>
-      )}
+                ))}
+              </div>
+            ))
+          }
+        </div>
+      </>)}
 
-      {activeSection === "members" && (
+      {sec === "members" && (
         <div className="manage-card">
           <div className="manage-card-title">Team members</div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Each new member will be prompted to set their own personal PIN on first login.</p>
           <label className="field-label">Name</label>
           <input className="field-input" placeholder="Member name" value={memName} onChange={e => setMemName(e.target.value)} style={{ marginBottom: 8 }} />
           <label className="field-label">Role</label>
@@ -796,14 +1000,17 @@ function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, member
             {GROUPS.map(g => <option key={g} value={g}>Group {g} — Follow-up team</option>)}
             <option value="pastor">Pastor — Lapsed member follow-up</option>
           </select>
-          <label className="field-label">PIN</label>
-          <input className="field-input" placeholder="Set a PIN (share privately)" value={memPin} onChange={e => setMemPin(e.target.value)} style={{ marginBottom: 10 }} />
+          <label className="field-label">Temporary PIN (they will change this on first login)</label>
+          <input className="field-input" placeholder="Set a temporary PIN" value={memPin} onChange={e => setMemPin(e.target.value)} style={{ marginBottom: 10 }} />
           {memMsg && <p className={memMsg.startsWith("✓") ? "success-text" : "err-text"}>{memMsg}</p>}
           <button className="btn-primary full" onClick={addMember}>Add member</button>
           <div style={{ marginTop: 14 }}>
             {members.filter(m => m.id !== "admin").map(m => (
               <div key={m.id} className="member-row">
-                <span style={{ fontSize: 13 }}>{m.name}</span>
+                <div>
+                  <span style={{ fontSize: 13 }}>{m.name}</span>
+                  {m.mustChangePIN && <span style={{ fontSize: 10, marginLeft: 6, color: "#BA7517", background: "#FAEEDA", border: "1px solid #EF9F27", borderRadius: 10, padding: "1px 6px" }}>PIN not yet set</span>}
+                </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   {m.isPastor
                     ? <span className="role-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, border: `1px solid ${PASTOR_META.border}` }}>Pastor</span>
@@ -817,7 +1024,7 @@ function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, member
         </div>
       )}
 
-      {activeSection === "pin" && (
+      {sec === "pin" && (
         <div className="manage-card">
           <div className="manage-card-title">Change your PIN</div>
           <input className="field-input" type="password" placeholder="New PIN (4+ characters)" value={newPin} onChange={e => setNewPin(e.target.value)} style={{ marginBottom: 10 }} />
@@ -829,40 +1036,268 @@ function ManageTab({ lists, pastorLists, currentWeek, onWeekChange, user, member
   );
 }
 
+// ── TASKS TAB ──────────────────────────────────────────────────────────────
+// Tasks are one-off assignments outside routine calls.
+// Admin can assign to any individual or group.
+// Each task has: title, description, assignedTo (name or group or "all"),
+// assignedToType ("member"|"group"|"pastors"|"all"), priority, dueDate, status
+
+const TASK_PRIORITY = {
+  low:    { label: "Low",    bg: "#F7F6F3", color: "#5F5E5A", border: "#C4C2BA" },
+  normal: { label: "Normal", bg: "#E6F1FB", color: "#0C447C", border: "#85B7EB" },
+  urgent: { label: "Urgent", bg: "#FBEAF0", color: "#72243E", border: "#ED93B1" },
+};
+const TASK_STATUS = {
+  open:        { label: "To do",       bg: "#F1F0EC", color: "#5F5E5A", border: "#C4C2BA" },
+  in_progress: { label: "In progress", bg: "#E6F1FB", color: "#0C447C", border: "#85B7EB" },
+  done:        { label: "Done ✓",      bg: "#EAF3DE", color: "#27500A", border: "#97C459" },
+};
+
+function TaskCard({ task, user, onUpdate, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const ps = TASK_PRIORITY[task.priority] || TASK_PRIORITY.normal;
+  const ts = TASK_STATUS[task.status] || TASK_STATUS.open;
+  const canEdit = user.isAdmin || task.assignedTo === user.name ||
+    task.assignedToType === "group" && task.assignedTo === user.group ||
+    task.assignedToType === "pastors" && user.isPastor ||
+    task.assignedToType === "all";
+
+  async function changeStatus(status) {
+    await updateDoc(doc(db, "tasks", task.id), { status, updatedBy: user.name, updatedAt: Date.now() });
+    onUpdate();
+  }
+
+  async function postNote() {
+    if (!note.trim()) return;
+    setSaving(true);
+    const nc = { id: uid(), text: note.trim(), author: user.name, ts: Date.now() };
+    await updateDoc(doc(db, "tasks", task.id), { comments: [...(task.comments || []), nc] });
+    setNote(""); setSaving(false); onUpdate();
+  }
+
+  const overdue = task.dueDate && task.status !== "done" && new Date(task.dueDate) < new Date();
+
+  return (
+    <div style={{ background: "#fff", border: `0.5px solid ${overdue ? "#ED93B1" : "#E0DFDB"}`, borderLeft: `3px solid ${ps.border}`, borderRadius: 10, padding: 12, marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#1A1A1A" }}>{task.title}</div>
+          {task.description && <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{task.description}</div>}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+            <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: ps.bg, color: ps.color, border: `1px solid ${ps.border}` }}>{ps.label}</span>
+            <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: ts.bg, color: ts.color, border: `1px solid ${ts.border}` }}>{ts.label}</span>
+            {task.assignedToType === "member" && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: "#F7F6F3", color: "#444", border: "1px solid #E0DFDB" }}>👤 {task.assignedTo}</span>}
+            {task.assignedToType === "group" && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: GROUP_META[task.assignedTo]?.bg, color: GROUP_META[task.assignedTo]?.color, border: `1px solid ${GROUP_META[task.assignedTo]?.border}` }}>Group {task.assignedTo}</span>}
+            {task.assignedToType === "pastors" && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: PASTOR_META.bg, color: PASTOR_META.color, border: `1px solid ${PASTOR_META.border}` }}>All Pastors</span>}
+            {task.assignedToType === "all" && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: "#F7F6F3", color: "#444", border: "1px solid #E0DFDB" }}>Everyone</span>}
+            {task.dueDate && <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 20, background: overdue ? "#FBEAF0" : "#F7F6F3", color: overdue ? "#72243E" : "#888", border: `1px solid ${overdue ? "#ED93B1" : "#E0DFDB"}` }}>{overdue ? "⚠ Overdue · " : "📅 "}{task.dueDate}</span>}
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+          {user.isAdmin && <button className="btn-del" onClick={() => onDelete(task.id)} style={{ fontSize: 14 }}>×</button>}
+          <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => setOpen(o => !o)}>
+            {task.comments?.length > 0 ? `💬 ${task.comments.length}` : "💬"} {open ? "▲" : "▼"}
+          </button>
+        </div>
+      </div>
+
+      {canEdit && task.status !== "done" && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          {task.status === "open" && <button style={{ flex: 1, fontSize: 11, padding: "5px 0", borderRadius: 6, border: "1px solid #85B7EB", background: "#E6F1FB", color: "#0C447C", cursor: "pointer" }} onClick={() => changeStatus("in_progress")}>▶ Start</button>}
+          {task.status === "in_progress" && <button style={{ flex: 1, fontSize: 11, padding: "5px 0", borderRadius: 6, border: "1px solid #97C459", background: "#EAF3DE", color: "#27500A", cursor: "pointer" }} onClick={() => changeStatus("done")}>✓ Mark done</button>}
+          {task.status !== "open" && <button style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, border: "1px solid #D0CFC9", background: "#F7F6F3", color: "#888", cursor: "pointer" }} onClick={() => changeStatus("open")}>↩ Reopen</button>}
+        </div>
+      )}
+      {canEdit && task.status === "done" && (
+        <button style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid #D0CFC9", background: "#F7F6F3", color: "#888", cursor: "pointer", marginTop: 6 }} onClick={() => changeStatus("open")}>↩ Reopen task</button>
+      )}
+
+      {open && (
+        <div style={{ marginTop: 10, borderTop: "0.5px solid #F0EFEB", paddingTop: 10 }}>
+          {(!task.comments || task.comments.length === 0) && <p className="empty-note">No notes yet.</p>}
+          {(task.comments || []).map(c => (
+            <div key={c.id} className="comment-card">
+              <div className="comment-meta"><span className="comment-author">{c.author}</span><span className="comment-time">{fmtDT(c.ts)}</span></div>
+              <p className="comment-text">{c.text}</p>
+            </div>
+          ))}
+          <div className="comment-compose">
+            <input className="field-input" placeholder="Add a note…" value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => e.key === "Enter" && postNote()} />
+            <button className="btn-primary" onClick={postNote} disabled={saving}>{saving ? "…" : "Post"}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TasksTab({ tasks, user, members, onRefresh }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
+  const [assignType, setAssignType] = useState("member");
+  const [assignTo, setAssignTo] = useState("");
+  const [priority, setPriority] = useState("normal");
+  const [dueDate, setDueDate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [filter, setFilter] = useState("mine");
+
+  // Determine what tasks this user sees
+  const myTasks = tasks.filter(t => {
+    if (t.assignedToType === "all") return true;
+    if (t.assignedToType === "member" && t.assignedTo === user.name) return true;
+    if (t.assignedToType === "group" && t.assignedTo === user.group) return true;
+    if (t.assignedToType === "pastors" && user.isPastor) return true;
+    return false;
+  });
+  const openTasks = myTasks.filter(t => t.status !== "done");
+  const doneTasks = myTasks.filter(t => t.status === "done");
+  const shownTasks = filter === "mine" ? myTasks : filter === "open" ? openTasks : doneTasks;
+
+  async function createTask() {
+    if (!title.trim()) { setMsg("Task title is required."); return; }
+    if (assignType === "member" && !assignTo) { setMsg("Select who to assign this task to."); return; }
+    if (assignType === "group" && !assignTo) { setMsg("Select a group."); return; }
+    setSaving(true);
+    const id = "t_" + uid();
+    await setDoc(doc(db, "tasks", id), {
+      id, title: title.trim(), description: desc.trim(),
+      assignedToType: assignType,
+      assignedTo: assignType === "member" || assignType === "group" ? assignTo : assignType,
+      priority, dueDate: dueDate || null,
+      status: "open", comments: [],
+      createdBy: user.name, createdAt: Date.now(),
+    });
+    setTitle(""); setDesc(""); setAssignTo(""); setDueDate(""); setPriority("normal");
+    setMsg("✓ Task created!"); setSaving(false); setShowCreate(false);
+    onRefresh(); setTimeout(() => setMsg(""), 3000);
+  }
+
+  async function deleteTask(id) {
+    if (!window.confirm("Delete this task?")) return;
+    await deleteDoc(doc(db, "tasks", id));
+    onRefresh();
+  }
+
+  const nonAdminMembers = members.filter(m => !m.isAdmin);
+
+  return (
+    <div className="tab-content">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Tasks <span style={{ fontSize: 12, color: "#888", fontWeight: 400 }}>({openTasks.length} open)</span></div>
+        {user.isAdmin && (
+          <button className="btn-primary" style={{ fontSize: 12, padding: "6px 14px" }} onClick={() => setShowCreate(s => !s)}>
+            {showCreate ? "Cancel" : "+ New task"}
+          </button>
+        )}
+      </div>
+
+      {msg && <p className={msg.startsWith("✓") ? "success-text" : "err-text"} style={{ marginBottom: 8 }}>{msg}</p>}
+
+      {showCreate && (
+        <div className="manage-card" style={{ marginBottom: 14 }}>
+          <div className="manage-card-title">Create new task</div>
+          <label className="field-label">Title *</label>
+          <input className="field-input" placeholder="Task title" value={title} onChange={e => setTitle(e.target.value)} style={{ marginBottom: 8 }} />
+          <label className="field-label">Description (optional)</label>
+          <textarea className="field-input" placeholder="More details…" value={desc} onChange={e => setDesc(e.target.value)} style={{ marginBottom: 8, minHeight: 60, resize: "vertical" }} />
+          <label className="field-label">Assign to</label>
+          <select className="field-input" value={assignType} onChange={e => { setAssignType(e.target.value); setAssignTo(""); }} style={{ marginBottom: 6 }}>
+            <option value="member">A specific person</option>
+            <option value="group">A follow-up group (A/B/C/D)</option>
+            <option value="pastors">All pastors</option>
+            <option value="all">Everyone</option>
+          </select>
+          {assignType === "member" && (
+            <select className="field-input" value={assignTo} onChange={e => setAssignTo(e.target.value)} style={{ marginBottom: 8 }}>
+              <option value="">-- Select person --</option>
+              {nonAdminMembers.map(m => <option key={m.id} value={m.name}>{m.name} ({m.isPastor ? "Pastor" : `Group ${m.group}`})</option>)}
+            </select>
+          )}
+          {assignType === "group" && (
+            <select className="field-input" value={assignTo} onChange={e => setAssignTo(e.target.value)} style={{ marginBottom: 8 }}>
+              <option value="">-- Select group --</option>
+              {GROUPS.map(g => <option key={g} value={g}>Group {g}</option>)}
+            </select>
+          )}
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <label className="field-label">Priority</label>
+              <select className="field-input" value={priority} onChange={e => setPriority(e.target.value)}>
+                {Object.entries(TASK_PRIORITY).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="field-label">Due date (optional)</label>
+              <input type="date" className="field-input" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+            </div>
+          </div>
+          <button className="btn-primary full" onClick={createTask} disabled={saving}>{saving ? "Saving…" : "Create task"}</button>
+        </div>
+      )}
+
+      {/* Filter tabs */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[["mine", `All (${myTasks.length})`], ["open", `Open (${openTasks.length})`], ["done", `Done (${doneTasks.length})`]].map(([k, l]) => (
+          <button key={k} onClick={() => setFilter(k)} style={{ fontSize: 12, padding: "4px 12px", borderRadius: 20, border: "0.5px solid", cursor: "pointer", background: filter === k ? "#185FA5" : "#F7F6F3", color: filter === k ? "#fff" : "#444", borderColor: filter === k ? "#185FA5" : "#D0CFC9" }}>{l}</button>
+        ))}
+      </div>
+
+      {shownTasks.length === 0
+        ? <div className="empty-state">{filter === "done" ? "No completed tasks yet." : "No tasks assigned to you."}</div>
+        : shownTasks.sort((a, b) => {
+          const po = { urgent: 0, normal: 1, low: 2 };
+          return (po[a.priority] || 1) - (po[b.priority] || 1);
+        }).map(t => <TaskCard key={t.id} task={t} user={user} onUpdate={onRefresh} onDelete={deleteTask} />)
+      }
+    </div>
+  );
+}
+
 // ── ROOT ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(() => { try { return JSON.parse(sessionStorage.getItem("fu_user")); } catch { return null; } });
-  const [tab, setTab] = useState("my");
+  const [tab, setTab] = useState("dashboard");
   const [lists, setLists] = useState([]);
   const [pastorLists, setPastorLists] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [currentWeek, setCurrentWeek] = useState(1);
   const [members, setMembers] = useState([]);
   const [selected, setSelected] = useState(null);
 
   useEffect(() => {
-    const u1 = onSnapshot(collection(db, "lists"), snap => setLists(snap.docs.map(d => d.data())));
-    const u2 = onSnapshot(collection(db, "pastor_lists"), snap => setPastorLists(snap.docs.map(d => d.data())));
-    const u3 = onSnapshot(doc(db, "config", "global"), snap => { if (snap.exists()) setCurrentWeek(snap.data().week || 1); });
-    const u4 = onSnapshot(collection(db, "members"), snap => setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    return () => { u1(); u2(); u3(); u4(); };
+    const u1 = onSnapshot(collection(db, "lists"), s => setLists(s.docs.map(d => d.data())));
+    const u2 = onSnapshot(collection(db, "pastor_lists"), s => setPastorLists(s.docs.map(d => d.data())));
+    const u3 = onSnapshot(doc(db, "config", "global"), s => { if (s.exists()) setCurrentWeek(s.data().week || 1); });
+    const u4 = onSnapshot(collection(db, "members"), s => setMembers(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const u5 = onSnapshot(collection(db, "tasks"), s => setTasks(s.docs.map(d => d.data())));
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, []);
 
-  useEffect(() => {
-    if (user) {
-      if (user.isAdmin) setTab("dashboard");
-      else if (user.isPastor) setTab("pastor");
-      else setTab("my");
-    }
-  }, [user?.key]);
+  function handleLogin(u) {
+    sessionStorage.setItem("fu_user", JSON.stringify(u));
+    setUser(u);
+    setTab("dashboard");
+  }
 
-  function handleLogin(u) { sessionStorage.setItem("fu_user", JSON.stringify(u)); setUser(u); }
+  function handlePinChanged(newPin) {
+    const updated = { ...user, mustChangePIN: false };
+    sessionStorage.setItem("fu_user", JSON.stringify(updated));
+    setUser(updated);
+  }
+
   function handleLogout() { sessionStorage.removeItem("fu_user"); setUser(null); }
+
   async function handleWeekChange(w) {
     setCurrentWeek(w);
     await setDoc(doc(db, "config", "global"), { week: w }, { merge: true });
   }
 
   if (!user) return <LoginScreen onLogin={handleLogin} />;
+  if (user.mustChangePIN) return <ForcePinChange user={user} onDone={handlePinChanged} />;
 
   const selectedList = selected ? (selected.listType === "pastor" ? pastorLists : lists).find(l => l.id === selected.listId) : null;
   const selectedVisitor = selectedList?.visitors?.find(v => v.id === selected.visitor.id);
@@ -872,10 +1307,15 @@ export default function App() {
       <Header user={user} currentWeek={currentWeek} onLogout={handleLogout} />
       <NavBar tab={tab} setTab={setTab} user={user} />
       <main>
-        {tab === "dashboard" && <Dashboard lists={lists} pastorLists={pastorLists} currentWeek={currentWeek} members={members} />}
+        {tab === "dashboard" && (
+          user.isAdmin
+            ? <AdminDashboard lists={lists} pastorLists={pastorLists} currentWeek={currentWeek} members={members} tasks={tasks} />
+            : <PersonalDashboard user={user} lists={lists} pastorLists={pastorLists} currentWeek={currentWeek} members={members} tasks={tasks} />
+        )}
         {tab === "my" && <MyListTab lists={lists} currentWeek={currentWeek} user={user} onSelectVisitor={setSelected} />}
         {tab === "all" && <AllGroupsTab lists={lists} currentWeek={currentWeek} onSelectVisitor={setSelected} />}
         {tab === "pastor" && <PastorTab pastorLists={pastorLists} user={user} onSelectVisitor={setSelected} />}
+        {tab === "tasks" && <TasksTab tasks={tasks} user={user} members={members} onRefresh={() => {}} />}
         {tab === "manage" && user.isAdmin && <ManageTab lists={lists} pastorLists={pastorLists} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} members={members} />}
       </main>
       {selected && selectedVisitor && (
@@ -885,3 +1325,4 @@ export default function App() {
     </div>
   );
 }
+
