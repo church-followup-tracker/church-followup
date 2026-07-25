@@ -1066,6 +1066,7 @@ function TaskCard({ task, user, onUpdate, onDelete }) {
 
   async function changeStatus(status) {
     await updateDoc(doc(db, "tasks", task.id), { status, updatedBy: user.name, updatedAt: Date.now() });
+    if (status === "done") setOpen(true); // auto-open comments when marking done
     onUpdate();
   }
 
@@ -1114,9 +1115,27 @@ function TaskCard({ task, user, onUpdate, onDelete }) {
         <button style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "1px solid #D0CFC9", background: "#F7F6F3", color: "#888", cursor: "pointer", marginTop: 6 }} onClick={() => changeStatus("open")}>↩ Reopen task</button>
       )}
 
+      {/* Comment prompt after completing — always visible for done tasks */}
+      {task.status === "done" && !open && (
+        <div style={{ marginTop: 10, background: "#EAF3DE", border: "1px solid #97C459", borderRadius: 8, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 12, color: "#27500A" }}>
+            ✓ Task completed by {task.updatedBy || "team"}
+            {task.comments?.length > 0 && <span style={{ marginLeft: 6, color: "#3B6D11" }}>· {task.comments.length} note{task.comments.length !== 1 ? "s" : ""}</span>}
+          </div>
+          <button className="btn-ghost" style={{ fontSize: 11, color: "#27500A" }} onClick={() => setOpen(true)}>
+            {task.comments?.length > 0 ? "View notes" : "Add note"} ▼
+          </button>
+        </div>
+      )}
+
       {open && (
         <div style={{ marginTop: 10, borderTop: "0.5px solid #F0EFEB", paddingTop: 10 }}>
-          {(!task.comments || task.comments.length === 0) && <p className="empty-note">No notes yet.</p>}
+          {task.status === "done" && (
+            <div style={{ fontSize: 12, color: "#27500A", background: "#EAF3DE", border: "1px solid #97C459", borderRadius: 6, padding: "6px 10px", marginBottom: 10 }}>
+              ✓ Completed by <b>{task.updatedBy || "team"}</b> — leave a note about how it went
+            </div>
+          )}
+          {(!task.comments || task.comments.length === 0) && <p className="empty-note">No notes yet — add one below.</p>}
           {(task.comments || []).map(c => (
             <div key={c.id} className="comment-card">
               <div className="comment-meta"><span className="comment-author">{c.author}</span><span className="comment-time">{fmtDT(c.ts)}</span></div>
@@ -1124,9 +1143,10 @@ function TaskCard({ task, user, onUpdate, onDelete }) {
             </div>
           ))}
           <div className="comment-compose">
-            <input className="field-input" placeholder="Add a note…" value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => e.key === "Enter" && postNote()} />
+            <input className="field-input" placeholder={task.status === "done" ? "How did it go? Any follow-up needed?" : "Add a note…"} value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => e.key === "Enter" && postNote()} />
             <button className="btn-primary" onClick={postNote} disabled={saving}>{saving ? "…" : "Post"}</button>
           </div>
+          <button className="btn-ghost" style={{ fontSize: 11, marginTop: 6 }} onClick={() => setOpen(false)}>▲ Collapse</button>
         </div>
       )}
     </div>
