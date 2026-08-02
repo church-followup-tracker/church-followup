@@ -73,6 +73,27 @@ function parseTxtFile(text) {
     return { name: p[0] || "", phone: p[1] || "", category };
   }).filter(r => r.name);
 }
+// PINs are hashed client-side (SHA-256) before ever touching the database,
+// so a PIN is never stored or visible as plain text in Firestore.
+async function hashPin(pin) {
+  const enc = new TextEncoder().encode(pin);
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+// Verifies an entered PIN against a member doc that may still have a legacy
+// plaintext `pin` field (pre-hashing) or the new `pinHash` field.
+// Returns { ok, needsUpgrade } — needsUpgrade signals we should silently
+// rewrite the doc to store the hash instead of the old plaintext value.
+async function verifyPin(memberData, enteredPin) {
+  if (memberData.pinHash) {
+    const h = await hashPin(enteredPin);
+    return { ok: h === memberData.pinHash, needsUpgrade: false };
+  }
+  if (memberData.pin) {
+    return { ok: memberData.pin === enteredPin, needsUpgrade: memberData.pin === enteredPin };
+  }
+  return { ok: false, needsUpgrade: false };
+}
 
 // ── CHARTS ────────────────────────────────────────────────────────────────
 function DonutChart({ visitors, size = 80, label }) {
@@ -171,7 +192,8 @@ function ForcePinChange({ user, onDone }) {
     if (pin !== confirm) { setErr("PINs don't match."); return; }
     setSaving(true); setErr("");
     try {
-      await updateDoc(doc(db, "members", user.key), { pin, mustChangePIN: false });
+      const pinHash = await hashPin(pin);
+      await updateDoc(doc(db, "members", user.key), { pinHash, pin: null, mustChangePIN: false });
       onDone(pin);
     } catch { setErr("Error saving PIN. Try again."); setSaving(false); }
   }
@@ -211,14 +233,21 @@ function LoginScreen({ onLogin }) {
       const snap = await getDoc(doc(db, "members", key));
       if (!snap.exists()) {
         if (key === "admin" && pin === "admin1234") {
-          await setDoc(doc(db, "members", "admin"), { name: "Admin", group: null, isAdmin: true, isPastor: false, isLeader: false, leaderCategory: null, pin: "admin1234", mustChangePIN: false });
+          const pinHash = await hashPin("admin1234");
+          await setDoc(doc(db, "members", "admin"), { name: "Admin", group: null, isAdmin: true, isPastor: false, isLeader: false, leaderCategory: null, pinHash, mustChangePIN: false });
           onLogin({ name: "Admin", group: null, isAdmin: true, isPastor: false, isLeader: false, leaderCategory: null, key: "admin", mustChangePIN: false });
           return;
         }
         setErr("Name not found. Ask your admin to add you."); setLoading(false); return;
       }
       const m = snap.data();
-      if (m.pin !== pin) { setErr("Wrong PIN. Try again."); setLoading(false); return; }
+      const { ok, needsUpgrade } = await verifyPin(m, pin);
+      if (!ok) { setErr("Wrong PIN. Try again."); setLoading(false); return; }
+      if (needsUpgrade) {
+        // Silently migrate this account from plaintext pin to a hash, next login onward.
+        const pinHash = await hashPin(pin);
+        await updateDoc(doc(db, "members", key), { pinHash, pin: null });
+      }
       onLogin({
         name: m.name, group: m.group || null, isAdmin: !!m.isAdmin, isPastor: !!m.isPastor,
         isLeader: !!m.isLeader, leaderCategory: m.leaderCategory || null,
@@ -317,9 +346,15 @@ function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
   const [lv, setLv] = useState(visitor);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(visitor.name);
+  const [editPhone, setEditPhone] = useState(visitor.phone || "");
+  const [editCategory, setEditCategory] = useState(visitor.category || "");
+  const [editSaving, setEditSaving] = useState(false);
 
   const isLeaderDoc = listType === "leader";
   const col = isLeaderDoc ? "leader_members" : (listType === "pastor" ? "pastor_lists" : "lists");
+  const supportsCategory = listType === "followup" || listType === "leader";
 
   async function updateStatus(status) {
     if (isLeaderDoc) {
@@ -353,6 +388,25 @@ function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
     setComment(""); setSaving(false);
   }
 
+  async function saveEdits() {
+    if (!editName.trim()) return;
+    setEditSaving(true);
+    const patch = { name: editName.trim(), phone: editPhone.trim() };
+    if (supportsCategory) patch.category = editCategory;
+    if (isLeaderDoc) {
+      await updateDoc(doc(db, "leader_members", lv.id), patch);
+    } else {
+      const snap = await getDoc(doc(db, col, listId));
+      if (snap.exists()) {
+        const visitors = snap.data().visitors.map(v => v.id === lv.id ? { ...v, ...patch } : v);
+        await updateDoc(doc(db, col, listId), { visitors });
+      }
+    }
+    setLv(p => ({ ...p, ...patch }));
+    setEditSaving(false);
+    setEditing(false);
+  }
+
   const cm = lv.category ? CATEGORY_META[lv.category] : null;
 
   return (
@@ -367,6 +421,35 @@ function VisitorModal({ visitor, listId, listName, listType, user, onClose }) {
           <button className="btn-close" onClick={onClose}>×</button>
         </div>
         <div className="modal-body">
+          {user.isAdmin && (
+            <div style={{ marginBottom: 16 }}>
+              {!editing ? (
+                <button className="btn-ghost" style={{ fontSize: 11 }} onClick={() => setEditing(true)}>✏️ Edit name / phone{supportsCategory ? " / category" : ""}</button>
+              ) : (
+                <div style={{ background: "#F7F6F3", border: "1px solid #E0DFDB", borderRadius: 8, padding: 10 }}>
+                  <label className="field-label">Name</label>
+                  <input className="field-input" value={editName} onChange={e => setEditName(e.target.value)} style={{ marginBottom: 8 }} />
+                  <label className="field-label">Phone</label>
+                  <input className="field-input" value={editPhone} onChange={e => setEditPhone(e.target.value)} style={{ marginBottom: 8 }} />
+                  {supportsCategory && (
+                    <>
+                      <label className="field-label">Category</label>
+                      <select className="field-input" value={editCategory} onChange={e => setEditCategory(e.target.value)} style={{ marginBottom: 8 }}>
+                        <option value="">-- none --</option>
+                        <option value="man">👨 Man</option>
+                        <option value="woman">👩 Woman</option>
+                        <option value="youth">🧑 Youth</option>
+                      </select>
+                    </>
+                  )}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button className="btn-primary" style={{ fontSize: 12, flex: 1 }} onClick={saveEdits} disabled={editSaving}>{editSaving ? "Saving…" : "Save changes"}</button>
+                    <button className="btn-outline" style={{ fontSize: 12 }} onClick={() => { setEditing(false); setEditName(lv.name); setEditPhone(lv.phone || ""); setEditCategory(lv.category || ""); }}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div className="section-label">Call status</div>
           <div className="status-grid">
             {Object.entries(STATUS_META).map(([key, meta]) => (
@@ -605,6 +688,14 @@ function PersonalDashboard({ user, lists, pastorLists, leaderMembers, currentWee
   const allCalled = allFV.filter(v => v.status === "called").length;
   const allEstablished = leaderMembers.length;
 
+  // Reminder: contacts assigned to me more than 3 days ago that I still
+  // haven't attempted (status pending/undefined). Uses assignedAt, which is
+  // stamped whenever a contact is first assigned or reassigned.
+  const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+  const staleContacts = myVisitors.filter(v =>
+    (!v.status || v.status === "pending") && v.assignedAt && (Date.now() - v.assignedAt) > THREE_DAYS
+  );
+
   const gm = user.group ? GROUP_META[user.group] : (isLeader ? LEADER_META[user.leaderCategory] : PASTOR_META);
 
   return (
@@ -619,6 +710,15 @@ function PersonalDashboard({ user, lists, pastorLists, leaderMembers, currentWee
           </div>
         </div>
       </div>
+
+      {staleContacts.length > 0 && (
+        <div style={{ background: "#FBEAF0", border: "1px solid #ED93B1", borderRadius: 10, padding: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#72243E" }}>⏰ {staleContacts.length} contact{staleContacts.length !== 1 ? "s" : ""} waiting 3+ days</div>
+          <div style={{ fontSize: 11, color: "#72243E", opacity: 0.8, marginTop: 2 }}>
+            {staleContacts.slice(0, 3).map(v => v.name).join(", ")}{staleContacts.length > 3 ? ` +${staleContacts.length - 3} more` : ""} — haven't been contacted yet
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <StatCard value={myVisitors.length} label="Assigned to me" />
@@ -704,9 +804,26 @@ function AdminDashboard({ lists, pastorLists, leaderMembers, currentWeek, member
     const wvs = lists.filter(l => l.createdWeek === w).flatMap(l => l.visitors || []);
     return { label: `W${w}`, value: wvs.length };
   });
-  const monthlyMap = {};
-  lists.forEach(l => { const m = weekToMonth(l.createdWeek); monthlyMap[m] = (monthlyMap[m] || 0) + (l.visitors?.length || 0); });
-  const monthData = Object.entries(monthlyMap).slice(-6).map(([label, value]) => ({ label: label.split(" ")[0], value, color: "#7B3FA8" }));
+  const monthlyMap = {}; // key: "YYYY-MM" for reliable chronological sorting
+  const monthlyLabels = {};
+  lists.forEach(l => {
+    const realDate = l.createdAt?.toMillis ? new Date(l.createdAt.toMillis()) : null;
+    let sortKey, label;
+    if (realDate) {
+      sortKey = `${realDate.getFullYear()}-${String(realDate.getMonth() + 1).padStart(2, "0")}`;
+      label = realDate.toLocaleDateString("en-GB", { month: "short" });
+    } else {
+      // Estimate from week number for older records that predate this fix.
+      const est = weekToMonth(l.createdWeek); // e.g. "Jul 2026"
+      const [mon, yr] = est.split(" ");
+      const monthIdx = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].indexOf(mon);
+      sortKey = `${yr}-${String(monthIdx + 1).padStart(2, "0")}`;
+      label = mon;
+    }
+    monthlyMap[sortKey] = (monthlyMap[sortKey] || 0) + (l.visitors?.length || 0);
+    monthlyLabels[sortKey] = label;
+  });
+  const monthData = Object.keys(monthlyMap).sort().slice(-6).map(k => ({ label: monthlyLabels[k], value: monthlyMap[k], color: "#7B3FA8" }));
 
   const teamMembers = members.filter(m => !m.isAdmin && !m.isPastor && !m.isLeader && m.group);
   const pastors = members.filter(m => m.isPastor);
@@ -1207,7 +1324,7 @@ function QueryTab({ lists, pastorLists, leaderMembers, members }) {
 }
 
 // ── MANAGE TAB ────────────────────────────────────────────────────────────
-function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChange, user, members }) {
+function ManageTab({ lists, pastorLists, leaderMembers, tasks, currentWeek, onWeekChange, user, members }) {
   const [sec, setSec] = useState("newvisitors");
   const [nvName, setNvName] = useState(""); const [nvWeek, setNvWeek] = useState(currentWeek);
   const [nvEntries, setNvEntries] = useState([]); const [nvInput, setNvInput] = useState(""); const [nvPhone, setNvPhone] = useState(""); const [nvCategory, setNvCategory] = useState("");
@@ -1223,6 +1340,16 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
   function addNvEntry() { if (nvInput.trim()) { setNvEntries(p => [...p, { name: nvInput.trim(), phone: nvPhone.trim(), category: nvCategory }]); setNvInput(""); setNvPhone(""); setNvCategory(""); } }
   function addLmEntry() { if (lmInput.trim()) { setLmEntries(p => [...p, { name: lmInput.trim(), phone: lmPhone.trim() }]); setLmInput(""); setLmPhone(""); } }
 
+  // Duplicate detection — checks a candidate name against everyone already
+  // known to the system (any status), so re-adding the same person twice
+  // (a repeat visit, or an accidental re-upload) gets flagged, not silently duplicated.
+  const allKnownNames = new Set([
+    ...lists.flatMap(l => (l.visitors || []).map(v => v.name.trim().toLowerCase())),
+    ...pastorLists.flatMap(l => (l.visitors || []).map(v => v.name.trim().toLowerCase())),
+    ...leaderMembers.map(v => v.name.trim().toLowerCase()),
+  ]);
+  function isDuplicateName(name) { return allKnownNames.has(name.trim().toLowerCase()); }
+
   async function createNewVisitorList() {
     if (!nvName.trim() || nvEntries.length === 0) { setNvMsg("Add a list name and at least one visitor."); return; }
     setNvSaving(true);
@@ -1236,7 +1363,7 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
     const startIndex = rotationSnap.exists() ? (rotationSnap.data().nextIndex || 0) : 0;
     const visitors = nvEntries.map((e, i) => {
       const memberIndex = (startIndex + i) % groupMembers.length;
-      return { id: uid(), name: e.name, phone: e.phone || "", category: e.category || "", status: "pending", comments: [], assignedTo: groupMembers[memberIndex].name, assignedGroup: targetGroup };
+      return { id: uid(), name: e.name, phone: e.phone || "", category: e.category || "", status: "pending", comments: [], assignedTo: groupMembers[memberIndex].name, assignedGroup: targetGroup, assignedAt: Date.now() };
     });
     const nextIndex = (startIndex + nvEntries.length) % groupMembers.length;
     await setDoc(rotationRef, { nextIndex, lastUpdated: Date.now() });
@@ -1267,17 +1394,42 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
     const key = slug(memName);
     const isPastor = memRole === "pastor";
     const isLeader = ["leader_man", "leader_woman", "leader_youth"].includes(memRole);
+    const isNewAdmin = memRole === "admin";
     const leaderCategory = isLeader ? memRole.replace("leader_", "") : null;
-    const group = (!isPastor && !isLeader) ? memRole : null;
-    await setDoc(doc(db, "members", key), { name: memName.trim(), group, isAdmin: false, isPastor, isLeader, leaderCategory, pin: memPin.trim(), mustChangePIN: true });
+    const group = (!isPastor && !isLeader && !isNewAdmin) ? memRole : null;
+    const pinHash = await hashPin(memPin.trim());
+    await setDoc(doc(db, "members", key), { name: memName.trim(), group, isAdmin: isNewAdmin, isPastor, isLeader, leaderCategory, pinHash, mustChangePIN: true });
     setMemName(""); setMemPin("");
     setMemMsg(`✓ ${memName.trim()} added. They'll set their own PIN on first login.`);
     setTimeout(() => setMemMsg(""), 5000);
   }
-  async function deleteMember(id) { if (window.confirm("Remove this member?")) await deleteDoc(doc(db, "members", id)); }
+  async function deleteMember(id) {
+    if (!window.confirm("Remove this member? Any contacts assigned to them will be marked unassigned and need reassignment.")) return;
+    const memberSnap = await getDoc(doc(db, "members", id));
+    const removedName = memberSnap.exists() ? memberSnap.data().name : null;
+    await deleteDoc(doc(db, "members", id));
+    if (!removedName) return;
+    // Clean up orphaned assignments across followup lists so nothing is silently lost.
+    let orphanCount = 0;
+    for (const list of lists.filter(l => l.status === "active")) {
+      const touched = (list.visitors || []).some(v => v.assignedTo === removedName);
+      if (!touched) continue;
+      const visitors = list.visitors.map(v => v.assignedTo === removedName ? { ...v, assignedTo: null, needsReassignment: true } : v);
+      orphanCount += list.visitors.filter(v => v.assignedTo === removedName).length;
+      await updateDoc(doc(db, "lists", list.id), { visitors });
+    }
+    for (const list of pastorLists.filter(l => l.status === "active")) {
+      const touched = (list.visitors || []).some(v => v.assignedTo === removedName);
+      if (!touched) continue;
+      const visitors = list.visitors.map(v => v.assignedTo === removedName ? { ...v, assignedTo: null, needsReassignment: true } : v);
+      await updateDoc(doc(db, "pastor_lists", list.id), { visitors });
+    }
+    if (orphanCount > 0) setAssignMsg(`⚠ ${removedName} had ${orphanCount} contact(s) — now unassigned and flagged for reassignment.`);
+  }
   async function changePin() {
     if (!newPin.trim() || newPin.trim().length < 4) { setPinMsg("PIN must be at least 4 characters."); return; }
-    await updateDoc(doc(db, "members", user.key), { pin: newPin.trim() });
+    const pinHash = await hashPin(newPin.trim());
+    await updateDoc(doc(db, "members", user.key), { pinHash, pin: null });
     setNewPin(""); setPinMsg("✓ PIN updated!"); setTimeout(() => setPinMsg(""), 3000);
   }
   async function reassignList(listId, targetGroup) {
@@ -1289,7 +1441,7 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
     const rotationSnap = await getDoc(rotationRef);
     const startIndex = rotationSnap.exists() ? (rotationSnap.data().nextIndex || 0) : 0;
     const existing = snap.data().visitors;
-    const visitors = existing.map((v, i) => ({ ...v, assignedTo: groupMembers[(startIndex + i) % groupMembers.length].name, assignedGroup: targetGroup }));
+    const visitors = existing.map((v, i) => ({ ...v, assignedTo: groupMembers[(startIndex + i) % groupMembers.length].name, assignedGroup: targetGroup, assignedAt: Date.now() }));
     const nextIndex = (startIndex + existing.length) % groupMembers.length;
     await setDoc(rotationRef, { nextIndex, lastUpdated: Date.now() });
     await updateDoc(doc(db, "lists", listId), { visitors });
@@ -1323,18 +1475,90 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
     setTimeout(() => setAssignMsg(""), 5000);
   }
 
-  const sections = [
+  async function reassignOrphans() {
+    let fixed = 0;
+    for (const g of GROUPS) {
+      const groupMembers = members.filter(m => !m.isAdmin && !m.isPastor && !m.isLeader && m.group === g).sort((a, b) => a.name.localeCompare(b.name));
+      if (!groupMembers.length) continue;
+      const rotationRef = doc(db, "config", `rotation_${g}`);
+      const rotationSnap = await getDoc(rotationRef);
+      let idx = rotationSnap.exists() ? (rotationSnap.data().nextIndex || 0) : 0;
+      for (const list of lists.filter(l => l.status === "active" && l.assignedGroup === g)) {
+        const orphans = (list.visitors || []).filter(v => v.needsReassignment);
+        if (!orphans.length) continue;
+        const visitors = list.visitors.map(v => {
+          if (!v.needsReassignment) return v;
+          const assigned = groupMembers[idx % groupMembers.length].name;
+          idx++;
+          fixed++;
+          return { ...v, assignedTo: assigned, needsReassignment: false, assignedAt: Date.now() };
+        });
+        await updateDoc(doc(db, "lists", list.id), { visitors });
+      }
+      await setDoc(rotationRef, { nextIndex: idx % groupMembers.length, lastUpdated: Date.now() });
+    }
+    for (const list of pastorLists.filter(l => l.status === "active")) {
+      const pastors = members.filter(m => m.isPastor).sort((a, b) => a.name.localeCompare(b.name));
+      if (!pastors.length) continue;
+      const orphans = (list.visitors || []).filter(v => v.needsReassignment);
+      if (!orphans.length) continue;
+      let i = 0;
+      const visitors = list.visitors.map(v => {
+        if (!v.needsReassignment) return v;
+        const assigned = pastors[i % pastors.length].name; i++; fixed++;
+        return { ...v, assignedTo: assigned, needsReassignment: false, assignedAt: Date.now() };
+      });
+      await updateDoc(doc(db, "pastor_lists", list.id), { visitors });
+    }
+    setAssignMsg(fixed > 0 ? `✓ Reassigned ${fixed} orphaned contact(s).` : "No orphaned contacts found.");
+    setTimeout(() => setAssignMsg(""), 4000);
+  }
+
+  const orphanCount = lists.filter(l => l.status === "active").flatMap(l => l.visitors || []).filter(v => v.needsReassignment).length
+    + pastorLists.filter(l => l.status === "active").flatMap(l => l.visitors || []).filter(v => v.needsReassignment).length;
+
+  function exportAllData() {
+    // Full backup — everything currently loaded client-side, serialized as one
+    // JSON file. PIN hashes are deliberately stripped from the members export
+    // so the backup file itself is never a credential risk if shared.
+    const safeMembers = members.map(({ pinHash, pin, ...rest }) => rest);
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      currentWeek,
+      members: safeMembers,
+      lists,
+      pastorLists,
+      leaderMembers,
+      tasks,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `church-followup-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const sectionList = [
     { id: "newvisitors", label: "👥 New visitors" },
     { id: "lapsed", label: "🙏 Lapsed" },
     { id: "members", label: "👤 Team" },
     { id: "week", label: "📅 Week" },
     { id: "pin", label: "🔑 My PIN" },
+    { id: "backup", label: "💾 Backup" },
   ];
 
   return (
     <div className="tab-content">
+      {orphanCount > 0 && (
+        <div style={{ background: "#FAEEDA", border: "1px solid #EF9F27", borderRadius: 10, padding: 12, marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 12, color: "#633806" }}>⚠ <b>{orphanCount}</b> contact{orphanCount !== 1 ? "s" : ""} unassigned after a member was removed.</div>
+          <button style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, border: "1px solid #EF9F27", background: "#fff", color: "#633806", cursor: "pointer", whiteSpace: "nowrap" }} onClick={reassignOrphans}>Reassign now</button>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-        {sections.map(s => (
+        {sectionList.map(s => (
           <button key={s.id} onClick={() => setSec(s.id)} style={{ fontSize: 12, padding: "5px 10px", borderRadius: 20, border: "0.5px solid", cursor: "pointer", background: sec === s.id ? "#185FA5" : "#F7F6F3", color: sec === s.id ? "#fff" : "#444", borderColor: sec === s.id ? "#185FA5" : "#D0CFC9" }}>{s.label}</button>
         ))}
       </div>
@@ -1372,12 +1596,19 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
           </div>
           {nvEntries.length > 0 && (
             <div className="chip-row">
-              {nvEntries.map((e, i) => (
-                <span key={i} className="name-chip">{e.name}{e.phone ? ` · ${e.phone}` : ""}{e.category ? ` ${CATEGORY_META[e.category].icon}` : " ⚠"}
-                  <button className="chip-del" onClick={() => setNvEntries(p => p.filter((_, j) => j !== i))}>×</button>
-                </span>
-              ))}
+              {nvEntries.map((e, i) => {
+                const dup = isDuplicateName(e.name);
+                return (
+                  <span key={i} className="name-chip" style={dup ? { background: "#FAEEDA", color: "#633806", borderColor: "#EF9F27" } : {}}>
+                    {dup ? "⚠ possible duplicate: " : ""}{e.name}{e.phone ? ` · ${e.phone}` : ""}{e.category ? ` ${CATEGORY_META[e.category].icon}` : " ⚠ no category"}
+                    <button className="chip-del" onClick={() => setNvEntries(p => p.filter((_, j) => j !== i))}>×</button>
+                  </span>
+                );
+              })}
             </div>
+          )}
+          {nvEntries.some(e => isDuplicateName(e.name)) && (
+            <p style={{ fontSize: 11, color: "#633806", marginBottom: 8 }}>⚠ Some names above already exist elsewhere in the system (new visitor, lapsed, or established member records). Double-check before creating this list.</p>
           )}
           {nvMsg && <p className={nvMsg.startsWith("✓") ? "success-text" : "err-text"}>{nvMsg}</p>}
           <button className="btn-primary full" style={{ marginTop: 8 }} onClick={createNewVisitorList} disabled={nvSaving}>{nvSaving ? "Saving…" : `Create & assign (${nvEntries.length} visitors)`}</button>
@@ -1406,7 +1637,7 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
                   {(list.visitors || []).map(v => (
                     <div key={v.id} className="manage-visitor-row">
                       <span>{v.name}{v.category ? ` ${CATEGORY_META[v.category].icon}` : ""}{v.phone ? <span style={{ color: "#aaa", fontSize: 11 }}> · {v.phone}</span> : ""}</span>
-                      <span style={{ fontSize: 11, color: "#888" }}>{v.assignedTo || "Unassigned"}</span>
+                      <span style={{ fontSize: 11, color: v.needsReassignment ? "#BA7517" : "#888" }}>{v.needsReassignment ? "⚠ needs reassignment" : (v.assignedTo || "Unassigned")}</span>
                     </div>
                   ))}
                 </div>
@@ -1430,12 +1661,19 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
           </div>
           {lmEntries.length > 0 && (
             <div className="chip-row">
-              {lmEntries.map((e, i) => (
-                <span key={i} className="name-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, borderColor: PASTOR_META.border }}>{e.name}{e.phone ? ` · ${e.phone}` : ""}
-                  <button className="chip-del" onClick={() => setLmEntries(p => p.filter((_, j) => j !== i))}>×</button>
-                </span>
-              ))}
+              {lmEntries.map((e, i) => {
+                const dup = isDuplicateName(e.name);
+                return (
+                  <span key={i} className="name-chip" style={dup ? { background: "#FAEEDA", color: "#633806", borderColor: "#EF9F27" } : { background: PASTOR_META.bg, color: PASTOR_META.color, borderColor: PASTOR_META.border }}>
+                    {dup ? "⚠ possible duplicate: " : ""}{e.name}{e.phone ? ` · ${e.phone}` : ""}
+                    <button className="chip-del" onClick={() => setLmEntries(p => p.filter((_, j) => j !== i))}>×</button>
+                  </span>
+                );
+              })}
             </div>
+          )}
+          {lmEntries.some(e => isDuplicateName(e.name)) && (
+            <p style={{ fontSize: 11, color: "#633806", marginBottom: 8 }}>⚠ Some names above already exist elsewhere in the system. Double-check before creating this list.</p>
           )}
           {lmMsg && <p className={lmMsg.startsWith("✓") ? "success-text" : "err-text"}>{lmMsg}</p>}
           <button className="btn-primary full" style={{ marginTop: 8, background: PASTOR_META.color }} onClick={createLapsedList} disabled={lmSaving}>{lmSaving ? "Saving…" : `Create & assign to pastors (${lmEntries.length} members)`}</button>
@@ -1471,6 +1709,7 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
             <option value="leader_man">👨 Men's Leader — Established members</option>
             <option value="leader_woman">👩 Women's Leader — Established members</option>
             <option value="leader_youth">🧑 Youth Leader — Established members</option>
+            <option value="admin">🛡 Full Admin — same access as you</option>
           </select>
           <label className="field-label">Temporary PIN</label>
           <input className="field-input" placeholder="Set a temporary PIN" value={memPin} onChange={e => setMemPin(e.target.value)} style={{ marginBottom: 10 }} />
@@ -1481,6 +1720,7 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
               <div key={m.id} className="member-row">
                 <div><span style={{ fontSize: 13 }}>{m.name}</span>{m.mustChangePIN && <span style={{ fontSize: 10, marginLeft: 6, color: "#BA7517", background: "#FAEEDA", border: "1px solid #EF9F27", borderRadius: 10, padding: "1px 6px" }}>PIN not set</span>}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {m.isAdmin && <span className="role-chip" style={{ background: "#1A1A1A", color: "#fff", border: "none" }}>Admin</span>}
                   {m.isPastor && <span className="role-chip" style={{ background: PASTOR_META.bg, color: PASTOR_META.color, border: `1px solid ${PASTOR_META.border}` }}>Pastor</span>}
                   {m.isLeader && <span className="role-chip" style={{ background: LEADER_META[m.leaderCategory]?.bg, color: LEADER_META[m.leaderCategory]?.color, border: `1px solid ${LEADER_META[m.leaderCategory]?.border}` }}>{LEADER_META[m.leaderCategory]?.icon} {LEADER_META[m.leaderCategory]?.roleLabel}</span>}
                   {!m.isPastor && !m.isLeader && <span className="role-chip" style={{ background: GROUP_META[m.group]?.bg, color: GROUP_META[m.group]?.color, border: `1px solid ${GROUP_META[m.group]?.border}` }}>{m.group}</span>}
@@ -1498,6 +1738,19 @@ function ManageTab({ lists, pastorLists, leaderMembers, currentWeek, onWeekChang
           <input className="field-input" type="password" placeholder="New PIN (4+ characters)" value={newPin} onChange={e => setNewPin(e.target.value)} style={{ marginBottom: 10 }} />
           {pinMsg && <p className={pinMsg.startsWith("✓") ? "success-text" : "err-text"}>{pinMsg}</p>}
           <button className="btn-outline full" onClick={changePin}>Update PIN</button>
+        </div>
+      )}
+
+      {sec === "backup" && (
+        <div className="manage-card">
+          <div className="manage-card-title">💾 Full data backup</div>
+          <p style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>
+            Downloads everything currently in the system — new visitor lists (active and archived), lapsed member lists, established members, tasks, team members, and the current week — as one JSON file. PINs are never included in this file.
+          </p>
+          <button className="btn-primary full" onClick={exportAllData}>⬇ Download full backup (JSON)</button>
+          <p style={{ fontSize: 11, color: "#aaa", marginTop: 10 }}>
+            Tip: keep dated copies of this file somewhere safe (e.g. a church admin Google Drive folder) every few months as an extra safety net alongside Firestore itself.
+          </p>
         </div>
       )}
     </div>
@@ -1562,7 +1815,7 @@ export default function App() {
         {tab === "pastor" && (user.isPastor || user.isAdmin) && <PastorTab pastorLists={pastorLists} user={user} onSelectVisitor={setSelected} />}
         {tab === "tasks" && <TasksTab tasks={tasks} user={user} members={members} onRefresh={() => {}} />}
         {tab === "query" && user.isAdmin && <QueryTab lists={lists} pastorLists={pastorLists} leaderMembers={leaderMembers} members={members} />}
-        {tab === "manage" && user.isAdmin && <ManageTab lists={lists} pastorLists={pastorLists} leaderMembers={leaderMembers} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} members={members} />}
+        {tab === "manage" && user.isAdmin && <ManageTab lists={lists} pastorLists={pastorLists} leaderMembers={leaderMembers} tasks={tasks} currentWeek={currentWeek} onWeekChange={handleWeekChange} user={user} members={members} />}
       </main>
       {selected && selectedVisitor && (
         <VisitorModal visitor={selectedVisitor} listId={selected.listId || selectedVisitor.id} listName={selected.listName || selectedVisitor.sourceListName}
